@@ -1,0 +1,86 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "contracts/travel_evidence.schema.json",
+    "title": "TravelEvidencePack",
+    "type": "object",
+    "required": ["x_contract_version", "request", "evidence"],
+    "additionalProperties": false,
+    "properties": {
+      "x_contract_version": { "type": "string", "const": "1.0" },
+      "request": {
+        "type": "object",
+        "required": ["user_query"],
+        "additionalProperties": false,
+        "properties": {
+          "user_query": { "type": "string", "minLength": 1 },
+          "destination": { "type": ["string", "null"] },
+          "lang": { "type": ["string", "null"], "description": "IETF tag e.g. pt-BR, en-US" },
+          "strategy_params": {
+            "type": ["object", "null"],
+            "additionalProperties": true,
+            "description": "Retrieval parameters versioned by the service (k_original, half-life, etc.)"
+          },
+          "debug": { "type": "boolean", "default": false }
+        }
+      },
+      "expanded_queries": {
+        "type": ["array", "null"],
+        "items": { "type": "string" }
+      },
+      "evidence": {
+        "type": "array",
+        "minItems": 0,
+        "items": { "$ref": "#/$defs/EvidenceItem" }
+      },
+      "debug": {
+        "type": ["object", "null"],
+        "additionalProperties": true
+      }
+    },
+    "$defs": {
+      "EvidenceItem": {
+        "type": "object",
+        "required": [
+          "card_id",
+          "summary",
+          "signals",
+          "places",
+          "categories",
+          "primary_category",
+          "confidence",
+          "source_url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "card_id": { "type": "string", "minLength": 8 },
+          "summary": { "type": "string", "minLength": 10 },
+          "signals": { "type": "array", "items": { "type": "string" } },
+          "places": { "type": "array", "items": { "type": "string" } },
+          "categories": { "type": "array", "items": { "type": "string" } },
+          "primary_category": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "source_url": { "type": "string", "minLength": 8 },
+          "video_upload_date": { "type": ["string", "null"], "description": "RFC3339 or ISO date" },
+          "score": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "distance": { "type": ["number", "null"] },
+              "freshness_penalty": { "type": ["number", "null"] },
+              "adjusted": { "type": ["number", "null"] }
+            }
+          },
+          "seen_in_queries": { "type": ["array", "null"], "items": { "type": "string" } },
+          "rerank": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "rank": { "type": "integer", "minimum": 1 },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+  

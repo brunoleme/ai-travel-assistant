@@ -1,0 +1,20 @@
+---
+alwaysApply: true
+---
+Observability rules:
+- Use structured logs (JSON) with:
+  - service name
+  - request_id / session_id
+  - latency_ms
+  - model name (if applicable)
+  - cache_hit boolean (where relevant)
+
+Metrics (minimum):
+- request_count
+- error_count
+- latency_ms histogram (approx)
+- cache_hit_rate (MCP services)
+- product_inclusion_rate (agent runtime)
+
+Tracing:
+- Phase 3 will add LangSmith for LLM traces in agent runtime and optionally MCP servers.

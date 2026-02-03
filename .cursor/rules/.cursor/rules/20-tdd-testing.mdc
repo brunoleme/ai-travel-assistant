@@ -1,0 +1,19 @@
+---
+alwaysApply: true
+---
+Testing rules:
+- Prefer unit tests over integration tests in early phases.
+- Mock external systems:
+  - OpenAI calls
+  - Weaviate client calls
+  - AWS SDK calls
+- Add contract validation tests:
+  - service outputs validate against JSON schema in /contracts
+
+TDD definition:
+- A feature is not started until a failing test exists that describes it.
+- "Done" = all tests green + acceptance checks satisfied.
+
+Recommended test structure:
+- tests/unit/... for pure logic and boundary validation
+- tests/contract/... for schema validation fixtures

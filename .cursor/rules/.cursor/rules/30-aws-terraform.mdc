@@ -1,0 +1,17 @@
+---
+alwaysApply: true
+---
+Terraform rules:
+- Terraform changes are isolated to infra/terraform only.
+- No manual edits in AWS console are assumed.
+- Every resource must have tags: project, environment, owner.
+- Provide outputs for:
+  - queue URLs (SQS)
+  - bucket names (S3)
+  - ECR repositories
+  - cluster endpoints (EKS, later)
+
+EDA principles:
+- Ingestion events are immutable.
+- Use DLQ for failed messages.
+- Idempotency is required for ingestion writes.

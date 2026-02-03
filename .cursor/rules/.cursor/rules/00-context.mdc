@@ -1,0 +1,17 @@
+---
+alwaysApply: true
+---
+
+You are contributing to a multi-service agentic RAG system.
+
+Non-negotiables:
+- Respect folder ownership boundaries in docs/OWNERSHIP.md.
+- All inter-service payloads must conform to /contracts JSON Schemas.
+- No breaking contract changes without bumping x_contract_version and updating all consumers.
+
+Tech:
+- Python + uv as package manager (uv sync / uv run)
+- FastAPI + WebSockets for agent runtime
+- MCP servers for travel knowledge and product selection
+- Weaviate for vector storage
+- AWS + Terraform for infra

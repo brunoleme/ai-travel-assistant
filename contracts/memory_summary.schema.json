@@ -1,0 +1,24 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "contracts/memory_summary.schema.json",
+    "title": "MemorySummary",
+    "type": "object",
+    "required": ["x_contract_version", "session_id", "summary"],
+    "additionalProperties": false,
+    "properties": {
+      "x_contract_version": { "type": "string", "const": "1.0" },
+      "session_id": { "type": "string", "minLength": 3 },
+      "summary": { "type": "string", "minLength": 1, "description": "Compact, LLM-safe memory text" },
+      "preferences": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "properties": {
+          "budget_style": { "type": ["string", "null"] },
+          "travel_style": { "type": ["string", "null"] },
+          "mobility_constraints": { "type": ["string", "null"] },
+          "kids": { "type": ["boolean", "null"] }
+        }
+      }
+    }
+  }
+  

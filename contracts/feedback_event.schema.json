@@ -1,0 +1,30 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "contracts/feedback_event.schema.json",
+    "title": "FeedbackEvent",
+    "type": "object",
+    "required": [
+      "x_contract_version",
+      "event_id",
+      "timestamp",
+      "session_id",
+      "user_query",
+      "answer_text",
+      "rating"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "x_contract_version": { "type": "string", "const": "1.0" },
+      "event_id": { "type": "string", "minLength": 8 },
+      "timestamp": { "type": "string", "minLength": 10, "description": "RFC3339" },
+      "session_id": { "type": "string", "minLength": 3 },
+      "user_query": { "type": "string", "minLength": 1 },
+      "answer_text": { "type": "string", "minLength": 1 },
+      "evidence_ids": { "type": ["array", "null"], "items": { "type": "string" } },
+      "picked_product_id": { "type": ["string", "null"] },
+      "clicked_link": { "type": ["string", "null"] },
+      "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+      "freeform_comment": { "type": ["string", "null"] }
+    }
+  }
+  
