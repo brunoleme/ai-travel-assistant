@@ -15,3 +15,5 @@ Tech:
 - MCP servers for travel knowledge and product selection
 - Weaviate for vector storage
 - AWS + Terraform for infra
+
+If you need Weaviate schema or retrieval/ingestion reference, read docs/experiments/* first. Do not copy notebook code verbatim.

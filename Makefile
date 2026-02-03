@@ -16,7 +16,7 @@ TF_DIR    := infra/terraform
 help:
 	@echo ""
 	@echo "Targets:"
-	@echo "  make bootstrap                 - Install toolchain + sync deps (per service)"
+	@echo "  make bootstrap                 - Sync deps (per service)"
 	@echo "  make fmt                        - Format all python services"
 	@echo "  make lint                       - Lint all python services"
 	@echo "  make test                       - Run unit tests for all services"
@@ -29,23 +29,34 @@ help:
 	@echo ""
 
 # ---- Bootstrap ----
-.PHONY: bootstrap
-bootstrap:
-	@echo "==> Syncing python dependencies with uv (per service)..."
-	@cd $(AGENT_DIR) && $(UV) sync
-	@cd $(KNOW_DIR)  && $(UV) sync
-	@cd $(PROD_DIR)  && $(UV) sync
-	@cd $(ING_DIR)   && $(UV) sync
+.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-ingestion
+bootstrap: sync-agent sync-knowledge sync-products sync-ingestion
+
+sync-agent:
+	@echo "==> Sync $(AGENT_DIR) (with dev extras)"
+	@cd $(AGENT_DIR) && $(UV) sync --extra dev
+
+sync-knowledge:
+	@echo "==> Sync $(KNOW_DIR) (with dev extras)"
+	@cd $(KNOW_DIR) && $(UV) sync --extra dev
+
+sync-products:
+	@echo "==> Sync $(PROD_DIR) (with dev extras)"
+	@cd $(PROD_DIR) && $(UV) sync --extra dev
+
+sync-ingestion:
+	@echo "==> Sync $(ING_DIR) (with dev extras)"
+	@cd $(ING_DIR) && $(UV) sync --extra dev
 
 # ---- Quality ----
 .PHONY: fmt lint test
-fmt:
+fmt: bootstrap
 	@cd $(AGENT_DIR) && $(PY) ruff format .
 	@cd $(KNOW_DIR)  && $(PY) ruff format .
 	@cd $(PROD_DIR)  && $(PY) ruff format .
 	@cd $(ING_DIR)   && $(PY) ruff format .
 
-lint:
+lint: bootstrap
 	@cd $(AGENT_DIR) && $(PY) ruff check .
 	@cd $(KNOW_DIR)  && $(PY) ruff check .
 	@cd $(PROD_DIR)  && $(PY) ruff check .
@@ -53,30 +64,30 @@ lint:
 
 test: test-agent test-knowledge test-products test-ingestion
 
-test-agent:
-	@cd $(AGENT_DIR) && $(PY) pytest -q
+test-agent: sync-agent
+	@cd $(AGENT_DIR) && $(PY) python -m pytest -q
 
-test-knowledge:
-	@cd $(KNOW_DIR) && $(PY) pytest -q
+test-knowledge: sync-knowledge
+	@cd $(KNOW_DIR) && $(PY) python -m pytest -q
 
-test-products:
-	@cd $(PROD_DIR) && $(PY) pytest -q
+test-products: sync-products
+	@cd $(PROD_DIR) && $(PY) python -m pytest -q
 
-test-ingestion:
-	@cd $(ING_DIR) && $(PY) pytest -q
+test-ingestion: sync-ingestion
+	@cd $(ING_DIR) && $(PY) python -m pytest -q
 
 # ---- Run (local dev) ----
 .PHONY: run-agent run-knowledge run-products run-ingestion
-run-agent:
+run-agent: sync-agent
 	@cd $(AGENT_DIR) && $(PY) uvicorn app.main:app --reload --port 8000
 
-run-knowledge:
-	@cd $(KNOW_DIR) && $(PY) python -m app.main
+run-knowledge: sync-knowledge
+	@cd $(KNOW_DIR) && $(PY) uvicorn app.main:app --reload --port 8010
 
-run-products:
-	@cd $(PROD_DIR) && $(PY) python -m app.main
+run-products: sync-products
+	@cd $(PROD_DIR) && $(PY) uvicorn app.main:app --reload --port 8020
 
-run-ingestion:
+run-ingestion: sync-ingestion
 	@cd $(ING_DIR) && $(PY) python -m app.main
 
 # ---- Terraform ----
