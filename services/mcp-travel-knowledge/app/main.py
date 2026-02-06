@@ -1,51 +1,85 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from typing import Any, Optional
+
+from app import adapter as adapter_module
+from app import cache as cache_module
+from app import retrieval as retrieval_module
+from app.models import (
+    RetrieveTravelEvidencePayload,
+    RetrieveTravelEvidenceResponse,
+    TravelEvidenceCard,
+)
 
 
 app = FastAPI(title="mcp-travel-knowledge", version="0.1.0")
 
 
-class RetrieveTravelEvidenceRequest(BaseModel):
-    user_query: str = Field(min_length=1)
-    destination: Optional[str] = None
-    lang: Optional[str] = None
-    debug: bool = False
-    strategy_params: dict[str, Any] = Field(default_factory=dict)
-
-
-class TravelEvidenceCard(BaseModel):
-    card_id: str
-    summary: str
-    signals: list[str] = Field(default_factory=list)
-    places: list[str] = Field(default_factory=list)
-    categories: list[str] = Field(default_factory=list)
-    primaryCategory: str = "other"
-    confidence: float = 0.0
-    source_url: str = ""
-    videoUploadDate: Optional[str] = None
-    score: dict[str, Any] = Field(default_factory=dict)
-    seen_in_queries: list[str] = Field(default_factory=list)
-
-
-class RetrieveTravelEvidenceResponse(BaseModel):
-    expanded_queries: list[str] = Field(default_factory=list)
-    evidence: list[TravelEvidenceCard] = Field(default_factory=list)
-    debug: Optional[dict[str, Any]] = None
-
-
 @app.get("/health")
 def health() -> dict:
+    """Health check endpoint."""
     return {"status": "ok"}
 
 
-@app.post("/retrieve_travel_evidence", response_model=RetrieveTravelEvidenceResponse)
-def retrieve_travel_evidence(req: RetrieveTravelEvidenceRequest) -> RetrieveTravelEvidenceResponse:
-    # Phase 1 stub: returns empty evidence but valid shape.
-    dbg = {"note": "stub"} if req.debug else None
-    return RetrieveTravelEvidenceResponse(expanded_queries=[], evidence=[], debug=dbg)
+def _strategy_params_version(payload: RetrieveTravelEvidencePayload) -> str:
+    """Version string for cache key: strategy_params.version or 'v0'."""
+    if payload.request.strategy_params is None:
+        return "v0"
+    return str(payload.request.strategy_params.get("version", "v0"))
+
+
+def _fetch_evidence_cards(query: str, limit: int = 5) -> list[TravelEvidenceCard]:
+    """Fetch raw cards from Weaviate and map to contract evidence (uses retrieval + adapter)."""
+    raw_list = retrieval_module.get_recommendation_cards(query=query, limit=limit)
+    evidence_items: list[TravelEvidenceCard] = []
+    for raw in raw_list:
+        try:
+            mapped = adapter_module.weaviate_card_to_evidence(raw)
+            evidence_items.append(TravelEvidenceCard(**mapped))
+        except (ValueError, TypeError):
+            continue
+    return evidence_items
+
+
+@app.post("/mcp/retrieve_travel_evidence", response_model=RetrieveTravelEvidenceResponse)
+def retrieve_travel_evidence(payload: RetrieveTravelEvidencePayload) -> RetrieveTravelEvidenceResponse:
+    """Retrieve travel evidence from Weaviate RecommendationCard; map to contract schema. Uses in-memory TTL cache."""
+    key = cache_module.build_cache_key(
+        payload.request.user_query,
+        payload.request.destination,
+        payload.request.lang,
+        _strategy_params_version(payload),
+    )
+    cached = cache_module.get(key)
+    if cached is not None:
+        evidence = [TravelEvidenceCard(**e) for e in cached["evidence"]]
+        log_line = json.dumps({"cache_hit": True})
+        print(log_line)
+        return RetrieveTravelEvidenceResponse(
+            x_contract_version="1.0",
+            request=payload.request,
+            expanded_queries=cached.get("expanded_queries"),
+            evidence=evidence,
+            debug=cached.get("debug"),
+        )
+    evidence_items = _fetch_evidence_cards(payload.request.user_query, limit=5)
+    dbg = {"evidence_count": len(evidence_items)} if payload.request.debug else None
+    cache_module.set_(key, {
+        "evidence": [c.model_dump() for c in evidence_items],
+        "expanded_queries": None,
+        "debug": dbg,
+    })
+    log_line = json.dumps({"cache_hit": False})
+    print(log_line)
+    return RetrieveTravelEvidenceResponse(
+        x_contract_version="1.0",
+        request=payload.request,
+        expanded_queries=None,
+        evidence=evidence_items,
+        debug=dbg,
+    )
 
 
 def main() -> None:

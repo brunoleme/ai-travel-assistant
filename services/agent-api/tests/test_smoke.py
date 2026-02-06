@@ -11,6 +11,7 @@ def test_health_ok() -> None:
 
 
 def test_ws_roundtrip() -> None:
+    """WS returns session_id, request_id, answer_text, citations, addon (no echo)."""
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
         ws.send_json(
@@ -26,4 +27,4 @@ def test_ws_roundtrip() -> None:
         assert resp["request_id"] == "r1"
         assert "answer_text" in resp
         assert isinstance(resp.get("citations"), list)
-        assert "echo:" in resp["answer_text"]
+        assert "addon" in resp
