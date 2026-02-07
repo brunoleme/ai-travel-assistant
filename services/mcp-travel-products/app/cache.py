@@ -53,3 +53,8 @@ def set_(key: str, value: dict[str, Any]) -> None:
     """Store value with TTL from env."""
     ttl = get_ttl_seconds()
     _store[key] = (value, time.time() + ttl)
+
+
+def clear_for_tests() -> None:
+    """Clear in-memory cache (for tests only)."""
+    _store.clear()

@@ -8,11 +8,15 @@ from typing import Any
 import weaviate
 
 
-def _get_client() -> weaviate.WeaviateClient:
-    """Connect to Weaviate using env WEAVIATE_HOST, WEAVIATE_PORT."""
+def _get_client() -> weaviate.WeaviateClient | None:
+    """Connect to Weaviate using env WEAVIATE_HOST, WEAVIATE_PORT. Returns None on connection failure."""
     host = os.environ.get("WEAVIATE_HOST", "localhost")
     port = int(os.environ.get("WEAVIATE_PORT", "8080"))
-    return weaviate.connect_to_local(host=host, port=port)
+    try:
+        return weaviate.connect_to_local(host=host, port=port)
+    except Exception:
+        print('{"weaviate_fallback": true}')
+        return None
 
 
 def _object_to_raw(obj: Any) -> dict[str, Any]:
@@ -29,11 +33,18 @@ def get_recommendation_cards(query: str, limit: int = 5) -> list[dict[str, Any]]
     """
     Query Weaviate RecommendationCard with near_text; return list of raw dicts (uuid + properties).
     Each dict is suitable for app.adapter.weaviate_card_to_evidence().
+    Never raises; returns [] on connection or query failure and logs weaviate_fallback.
     """
     client = _get_client()
+    if client is None:
+        return []
+
     try:
         coll = client.collections.get("RecommendationCard")
         result = coll.query.near_text(query=query, limit=limit)
         return [_object_to_raw(obj) for obj in result.objects]
+    except Exception:
+        print('{"weaviate_fallback": true}')
+        return []
     finally:
         client.close()

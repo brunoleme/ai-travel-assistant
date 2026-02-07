@@ -34,8 +34,24 @@ def retrieve_product_cards(
     Query Weaviate ProductCard with near_text; map to contract ProductCandidates.
     Returns 1–3 candidates when client is None or query fails (stub).
     """
+    candidates, _ = retrieve_product_cards_with_fallback(
+        client, query_signature, limit=limit, min_confidence=min_confidence
+    )
+    return candidates
+
+
+def retrieve_product_cards_with_fallback(
+    client: "weaviate.WeaviateClient | None",
+    query_signature: str,
+    limit: int = 10,
+    min_confidence: float | None = None,
+) -> tuple[list[ProductCandidate], bool]:
+    """
+    Same as retrieve_product_cards but returns (candidates, weaviate_fallback).
+    weaviate_fallback is True when stub was used (client None or query failed).
+    """
     if client is None:
-        return _stub_candidates()
+        return (_stub_candidates(), True)
 
     try:
         import weaviate.classes as wvc
@@ -61,10 +77,10 @@ def retrieve_product_cards(
             )
             candidates.append(cand)
         if not candidates:
-            return _stub_candidates()
-        return candidates[: min(limit, 3)]
+            return (_stub_candidates(), True)
+        return (candidates[: min(limit, 3)], False)
     except Exception:
-        return _stub_candidates()
+        return (_stub_candidates(), True)
 
 
 def _stub_candidates() -> list[ProductCandidate]:

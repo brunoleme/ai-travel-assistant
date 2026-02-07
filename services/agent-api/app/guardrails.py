@@ -44,7 +44,7 @@ def _looks_factual(text: str) -> bool:
     return False
 
 
-def _infer_addon_bucket(addon: dict[str, Any]) -> str | None:
+def infer_addon_bucket(addon: dict[str, Any]) -> str | None:
     combined = " ".join(
         str(addon.get(k, ""))
         for k in ("summary", "primary_category", "merchant")
@@ -85,7 +85,7 @@ def validate_and_fix(
             out["citations"] = []
 
     if addon:
-        bucket = _infer_addon_bucket(addon)
+        bucket = infer_addon_bucket(addon)
         if bucket and not _user_requested_bucket(user_query, bucket):
             out["addon"] = None
 

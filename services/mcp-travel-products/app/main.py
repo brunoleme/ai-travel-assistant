@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from app import cache as cache_module
+from app import logging_utils as logging_utils_module
+from app import metrics as metrics_module
 from app import retrieval as retrieval_module
 from app.models import (
     ProductCandidate,
@@ -14,6 +16,13 @@ from app.models import (
 
 
 app = FastAPI(title="mcp-travel-products", version="0.1.0")
+
+
+def _session_request_ids(request: Request) -> tuple[str | None, str | None]:
+    """Read x-session-id and x-request-id from headers; default None."""
+    session_id = request.headers.get("x-session-id") or None
+    request_id = request.headers.get("x-request-id") or None
+    return session_id, request_id
 
 
 def _filter_by_min_confidence(
@@ -32,9 +41,19 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/metrics")
+def metrics() -> dict:
+    """Lightweight JSON metrics (in-memory since process start)."""
+    return metrics_module.get_metrics()
+
+
 @app.post("/mcp/retrieve_product_candidates", response_model=ProductCandidatesResponse)
-def retrieve_product_candidates(req: ProductCandidatesRequest) -> ProductCandidatesResponse:
+def retrieve_product_candidates(request: Request, req: ProductCandidatesRequest) -> ProductCandidatesResponse:
     """Retrieve product candidates from Weaviate ProductCard; uses in-memory TTL cache. min_confidence applied as post-filter."""
+    route = "/mcp/retrieve_product_candidates"
+    session_id, request_id = _session_request_ids(request)
+    t0 = time.perf_counter()
+
     key = cache_module.build_cache_key(
         req.request.query_signature,
         req.request.market,
@@ -45,8 +64,16 @@ def retrieve_product_candidates(req: ProductCandidatesRequest) -> ProductCandida
     if cached is not None:
         raw = [ProductCandidate(**d) for d in cached["candidates"]]
         filtered = _filter_by_min_confidence(raw, req.request.min_confidence)
-        log_line = json.dumps({"cache_hit": True})
-        print(log_line)
+        latency_ms = (time.perf_counter() - t0) * 1000
+        metrics_module.record_request(cache_hit=True, latency_ms=latency_ms, weaviate_fallback=False)
+        logging_utils_module.log_request(
+            route=route,
+            cache_hit=True,
+            latency_ms=latency_ms,
+            session_id=session_id,
+            request_id=request_id,
+            weaviate_fallback=False,
+        )
         return ProductCandidatesResponse(
             x_contract_version="1.0",
             request=req.request,
@@ -54,7 +81,7 @@ def retrieve_product_candidates(req: ProductCandidatesRequest) -> ProductCandida
         )
     client = retrieval_module.get_client()
     limit = req.request.limit or 10
-    raw = retrieval_module.retrieve_product_cards(
+    raw, weaviate_fallback = retrieval_module.retrieve_product_cards_with_fallback(
         client,
         query_signature=req.request.query_signature,
         limit=limit,
@@ -62,8 +89,16 @@ def retrieve_product_candidates(req: ProductCandidatesRequest) -> ProductCandida
     )
     cache_module.set_(key, {"candidates": [c.model_dump() for c in raw]})
     filtered = _filter_by_min_confidence(raw, req.request.min_confidence)
-    log_line = json.dumps({"cache_hit": False})
-    print(log_line)
+    latency_ms = (time.perf_counter() - t0) * 1000
+    metrics_module.record_request(cache_hit=False, latency_ms=latency_ms, weaviate_fallback=weaviate_fallback)
+    logging_utils_module.log_request(
+        route=route,
+        cache_hit=False,
+        latency_ms=latency_ms,
+        session_id=session_id,
+        request_id=request_id,
+        weaviate_fallback=weaviate_fallback,
+    )
     return ProductCandidatesResponse(
         x_contract_version="1.0",
         request=req.request,

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "app/schemas/eval_row.schema.json",
+  "title": "EvalRow",
+  "type": "object",
+  "required": [
+    "ts",
+    "run_id",
+    "session_id",
+    "request_id",
+    "user_query",
+    "latency_ms_total",
+    "latency_ms_knowledge",
+    "latency_ms_products",
+    "citations_count",
+    "product_included",
+    "groundedness_proxy",
+    "guardrails_rewritten",
+    "response_snapshot",
+    "judge_groundedness_score",
+    "judge_product_relevance_score",
+    "judge_model",
+    "judge_error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "ISO8601 timestamp"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "user_query": {
+      "type": "string"
+    },
+    "destination": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lang": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "market": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latency_ms_total": {
+      "type": "number",
+      "minimum": 0
+    },
+    "latency_ms_knowledge": {
+      "type": "number",
+      "minimum": 0
+    },
+    "latency_ms_products": {
+      "type": "number",
+      "minimum": 0
+    },
+    "citations_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "product_included": {
+      "type": "boolean"
+    },
+    "groundedness_proxy": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "guardrails_rewritten": {
+      "type": "boolean"
+    },
+    "judge_groundedness_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "judge_product_relevance_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "judge_model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "judge_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "response_snapshot": {
+      "type": "object",
+      "required": [
+        "answer_text",
+        "citations"
+      ],
+      "properties": {
+        "answer_text": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "addon_bucket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

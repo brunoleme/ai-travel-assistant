@@ -45,7 +45,7 @@ MOCK_CANDIDATES = [
 ]
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", return_value=MOCK_CANDIDATES)
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", return_value=(MOCK_CANDIDATES, False))
 def test_same_request_twice_second_hit_retrieval_not_called_again(mock_retrieve: object) -> None:
     """Same request twice: second response is from cache; retrieval is not called on second request."""
     client = TestClient(app)
@@ -69,7 +69,7 @@ def test_same_request_twice_second_hit_retrieval_not_called_again(mock_retrieve:
     assert mock_retrieve.call_count == 1
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", return_value=MOCK_CANDIDATES)
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", return_value=(MOCK_CANDIDATES, False))
 def test_different_destination_busts_cache(mock_retrieve: object) -> None:
     """Different destination yields different cache key; retrieval called for each."""
     client = TestClient(app)
@@ -93,7 +93,7 @@ def test_different_destination_busts_cache(mock_retrieve: object) -> None:
     assert mock_retrieve.call_count == 2
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", return_value=MOCK_CANDIDATES)
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", return_value=(MOCK_CANDIDATES, False))
 def test_different_lang_busts_cache(mock_retrieve: object) -> None:
     """Different lang yields different cache key; retrieval called for each."""
     client = TestClient(app)
@@ -124,7 +124,7 @@ CANDIDATES_VARYING_CONF = [
 ]
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", return_value=CANDIDATES_VARYING_CONF)
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", return_value=(CANDIDATES_VARYING_CONF, False))
 def test_min_confidence_post_filter_same_cache_key(mock_retrieve: object) -> None:
     """Approach B: min_confidence excluded from key; same key with different min_confidence hits cache, results filtered."""
     client = TestClient(app)
@@ -155,7 +155,7 @@ def test_min_confidence_post_filter_same_cache_key(mock_retrieve: object) -> Non
     assert mock_retrieve.call_count == 1
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", return_value=MOCK_CANDIDATES)
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", return_value=(MOCK_CANDIDATES, False))
 @patch("app.cache.get_ttl_seconds", return_value=1)
 @patch("app.cache.time")
 def test_ttl_expiry_refreshes(mock_time: object, mock_ttl: object, mock_retrieve: object) -> None:

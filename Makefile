@@ -24,6 +24,7 @@ help:
 	@echo "  make run-agent                   - Run FastAPI agent runtime"
 	@echo "  make run-knowledge               - Run MCP travel-knowledge server"
 	@echo "  make run-products                - Run MCP travel-products server"
+	@echo "  make eval                        - Run eval harness, write to data/eval/run.jsonl"
 	@echo "  make run-ingestion               - Run ingestion worker (local mode)"
 	@echo "  make tf-fmt | tf-validate        - Terraform formatting and validation"
 	@echo ""
@@ -77,18 +78,25 @@ test-ingestion: sync-ingestion
 	@cd $(ING_DIR) && $(PY) python -m pytest -q
 
 # ---- Run (local dev) ----
+# Load configs/.env so WEAVIATE_* etc. are set (run from repo root)
+ENV_FILE := configs/.env
+
 .PHONY: run-agent run-knowledge run-products run-ingestion
 run-agent: sync-agent
-	@cd $(AGENT_DIR) && $(PY) uvicorn app.main:app --reload --port 8000
+	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8000
 
 run-knowledge: sync-knowledge
-	@cd $(KNOW_DIR) && $(PY) uvicorn app.main:app --reload --port 8010
+	@cd $(KNOW_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8010
 
 run-products: sync-products
-	@cd $(PROD_DIR) && $(PY) uvicorn app.main:app --reload --port 8020
+	@cd $(PROD_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8020
 
 run-ingestion: sync-ingestion
-	@cd $(ING_DIR) && $(PY) python -m app.main
+	@cd $(ING_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.main
+
+.PHONY: eval
+eval: sync-agent
+	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.eval_runner --out ../../data/eval/run.jsonl
 
 # ---- Terraform ----
 .PHONY: tf-fmt tf-validate

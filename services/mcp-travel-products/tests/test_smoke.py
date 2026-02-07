@@ -44,7 +44,7 @@ def test_health():
     assert r.json()["status"] == "ok"
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", side_effect=lambda *a, **k: _mock_candidates())
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", side_effect=lambda *a, **k: (_mock_candidates(), False))
 def test_retrieve_product_candidates_schema_validation(_mock_retrieve):
     """Test POST /mcp/retrieve_product_candidates validates against contract schema."""
     c = TestClient(app)
@@ -76,7 +76,7 @@ def test_retrieve_product_candidates_schema_validation(_mock_retrieve):
     assert len(body["candidates"]) <= 3
 
 
-@patch("app.main.retrieval_module.retrieve_product_cards", side_effect=lambda *a, **k: _mock_candidates())
+@patch("app.main.retrieval_module.retrieve_product_cards_with_fallback", side_effect=lambda *a, **k: (_mock_candidates(), False))
 def test_retrieve_product_candidates_minimal_request(_mock_retrieve):
     """Test POST /mcp/retrieve_product_candidates with minimal required fields."""
     c = TestClient(app)
