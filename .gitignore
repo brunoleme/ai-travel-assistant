@@ -5,4 +5,10 @@ __pycache__/
 data/
 *.log
 .env
+configs/.env
+configs/cookies.txt
 *.egg-info
+infra/terraform/.terraform/
+infra/terraform/*.tfplan
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*

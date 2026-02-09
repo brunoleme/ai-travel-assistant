@@ -99,9 +99,23 @@ eval: sync-agent
 	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.eval_runner --out ../../data/eval/run.jsonl
 
 # ---- Terraform ----
-.PHONY: tf-fmt tf-validate
+.PHONY: tf-fmt tf-validate tf-init-backend tf-plan tf-apply
 tf-fmt:
 	@cd $(TF_DIR) && terraform fmt -recursive
 
 tf-validate:
 	@cd $(TF_DIR) && terraform validate
+
+# Initialize Terraform with S3 backend (bucket/region from .env).
+tf-init-backend:
+	@cd $(TF_DIR) && set -a && . ../../$(ENV_FILE) && set +a && \
+		terraform init -reconfigure \
+		-backend-config="bucket=$${TF_STATE_BUCKET}" \
+		-backend-config="region=$${AWS_REGION}"
+
+# Plan/apply: load .env first so AWS_* and TF_* are set.
+tf-plan:
+	@cd $(TF_DIR) && set -a && . ../../$(ENV_FILE) && set +a && terraform plan -out=tfplan
+
+tf-apply:
+	@cd $(TF_DIR) && set -a && . ../../$(ENV_FILE) && set +a && terraform apply

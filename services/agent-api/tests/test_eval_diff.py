@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from app.eval_diff import _load_rows, _mean, _pct_included, diff
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
