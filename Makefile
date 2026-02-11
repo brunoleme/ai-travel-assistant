@@ -26,6 +26,8 @@ help:
 	@echo "  make run-products                - Run MCP travel-products server"
 	@echo "  make eval                        - Run eval harness, write to data/eval/run.jsonl"
 	@echo "  make run-ingestion               - Run ingestion worker (local mode)"
+	@echo "  make send-graph URL=... DESTINATION_HINT=...  - Enqueue one youtube_kg (Neo4j) job"
+	@echo "  make send-playlist URL=... DESTINATION=... PLAYLIST_NAME=...  - Enqueue playlist (Weaviate)"
 	@echo "  make tf-fmt | tf-validate        - Terraform formatting and validation"
 	@echo ""
 
@@ -93,6 +95,16 @@ run-products: sync-products
 
 run-ingestion: sync-ingestion
 	@cd $(ING_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.main
+
+# Send one graph ingestion (youtube_kg) for a single video. Example: make send-graph URL="https://www.youtube.com/watch?v=VID" DESTINATION_HINT="Orlando"
+.PHONY: send-graph
+send-graph: sync-ingestion
+	@set -a && . $(ENV_FILE) && set +a && cd $(ING_DIR) && $(PY) python ../../scripts/send_graph_ingestion.py "$(URL)" --destination-hint "$(DESTINATION_HINT)"
+
+# Send playlist ingestion (one message per video). Example: make send-playlist URL="https://www.youtube.com/playlist?list=..." DESTINATION="Maldivas" PLAYLIST_NAME="My Playlist"
+.PHONY: send-playlist
+send-playlist: sync-ingestion
+	@set -a && . $(ENV_FILE) && set +a && cd $(ING_DIR) && $(PY) python ../../scripts/send_playlist_ingestion.py "$(URL)" --destination "$(DESTINATION)" --playlist-name "$(PLAYLIST_NAME)"
 
 .PHONY: eval
 eval: sync-agent

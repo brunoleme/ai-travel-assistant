@@ -42,7 +42,7 @@ def handle_fetch(event: IngestionRequested) -> TranscriptReady | None:
         return None
     source_type = event.payload.get("source_type")
 
-    if source_type == "youtube":
+    if source_type == "youtube" or source_type == "youtube_kg":
         video_url = event.payload.get("video_url")
         if not video_url:
             return None
@@ -50,7 +50,7 @@ def handle_fetch(event: IngestionRequested) -> TranscriptReady | None:
         lang_hint = event.payload.get("language_hint", "auto")
         segments, lang, video_metadata = fetch_youtube_transcript(video_url, lang_hint)
         payload = {
-            "source_type": "youtube",
+            "source_type": source_type,
             "segments": segments,
             "lang": lang,
             "video_metadata": video_metadata,
@@ -61,6 +61,9 @@ def handle_fetch(event: IngestionRequested) -> TranscriptReady | None:
             "enrich_model": event.payload.get("enrich_model", "gpt-4.1-mini"),
             **_default_chunk_params(event.payload),
         }
+        if source_type == "youtube_kg":
+            payload["destination_hint"] = event.payload.get("destination_hint", "")
+            payload["extract_model"] = event.payload.get("extract_model", "gpt-4.1")
         mark_processed(key)
         return TranscriptReady(
             event_id=str(uuid4()),
@@ -92,7 +95,7 @@ def handle_fetch(event: IngestionRequested) -> TranscriptReady | None:
             error=event.error,
         )
 
-    if source_type is not None and source_type not in ("youtube", "products"):
+    if source_type is not None and source_type not in ("youtube", "youtube_kg", "products"):
         return None  # Unknown source_type -> DLQ after retries
 
     # Mock for tests (no source_type)
@@ -115,7 +118,7 @@ def handle_transcript(event: TranscriptReady) -> ChunksReady | None:
         return None
     source_type = event.payload.get("source_type")
 
-    if source_type == "youtube":
+    if source_type == "youtube" or source_type == "youtube_kg":
         from app.sources.youtube import chunk_timestamped_segments
         segments = event.payload.get("segments") or []
         chunks = chunk_timestamped_segments(
@@ -127,7 +130,7 @@ def handle_transcript(event: TranscriptReady) -> ChunksReady | None:
             gap_split_s=event.payload.get("gap_split_s", 2.5),
         )
         payload = {
-            "source_type": "youtube",
+            "source_type": source_type,
             "chunks": chunks,
             "video_metadata": event.payload.get("video_metadata", {}),
             "lang": event.payload.get("lang", "pt"),
@@ -137,6 +140,9 @@ def handle_transcript(event: TranscriptReady) -> ChunksReady | None:
             "creator_tier": event.payload.get("creator_tier", ""),
             "enrich_model": event.payload.get("enrich_model", "gpt-4.1-mini"),
         }
+        if source_type == "youtube_kg":
+            payload["destination_hint"] = event.payload.get("destination_hint", "")
+            payload["extract_model"] = event.payload.get("extract_model", "gpt-4.1")
         mark_processed(key)
         return ChunksReady(
             event_id=str(uuid4()),
@@ -221,6 +227,57 @@ def handle_chunk(event: ChunksReady) -> EnrichmentReady | None:
             error=event.error,
         )
 
+    if source_type == "youtube_kg":
+        import os
+        from app.sources.graph import extract_graph_from_chunk
+        from openai import OpenAI
+        chunks = event.payload.get("chunks") or []
+        video_metadata = event.payload.get("video_metadata", {})
+        video_url = video_metadata.get("webpage_url") or (
+            f"https://www.youtube.com/watch?v={video_metadata.get('id', '')}"
+        )
+        destination_hint = event.payload.get("destination_hint", "")
+        model = event.payload.get("extract_model", "gpt-4.1")
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        client = OpenAI(api_key=api_key)
+        graph_extractions: list[dict] = []
+        for i, ch in enumerate(chunks, start=1):
+            text = (ch.get("text") or "").strip()
+            if len(text) < 150:
+                continue
+            ge = extract_graph_from_chunk(
+                client=client,
+                model=model,
+                video_url=video_url,
+                chunk_idx=i,
+                start_sec=int(ch.get("startSec", 0)),
+                end_sec=int(ch.get("endSec", 0)),
+                chunk_text=text,
+                destination_hint=destination_hint or None,
+            )
+            if ge.nodes or ge.edges:
+                graph_extractions.append(ge.model_dump())
+        payload = {
+            "source_type": "youtube_kg",
+            "graph_extractions": graph_extractions,
+            "chunks": chunks,
+            "video_metadata": video_metadata,
+            "destination_hint": destination_hint,
+            "extract_model": model,
+        }
+        mark_processed(key)
+        return EnrichmentReady(
+            event_id=str(uuid4()),
+            content_source_id=event.content_source_id,
+            stage="enrichment",
+            payload=payload,
+            retry_count=event.retry_count,
+            max_retries=event.max_retries,
+            error=event.error,
+        )
+
     if source_type == "products":
         from app.sources.products import enrich_product_to_card, ProductInput
         products = event.payload.get("products") or []
@@ -259,10 +316,46 @@ def handle_chunk(event: ChunksReady) -> EnrichmentReady | None:
 
 
 def handle_enrich(event: EnrichmentReady) -> EmbeddingsReady | None:
-    """Pass through (Weaviate vectorizer). Idempotent."""
+    """Merge graph (youtube_kg) or pass through (Weaviate vectorizer). Idempotent."""
     key = build_idempotency_key(event.content_source_id, "embeddings")
     if already_processed(key):
         return None
+    source_type = event.payload.get("source_type")
+
+    if source_type == "youtube_kg":
+        from app.sources.graph import merge_graph, GraphExtraction
+        raw = event.payload.get("graph_extractions") or []
+        extractions = []
+        for d in raw:
+            try:
+                extractions.append(GraphExtraction(**d))
+            except Exception:
+                continue
+        graph = merge_graph(extractions)
+        video_metadata = event.payload.get("video_metadata", {})
+        video_url = video_metadata.get("webpage_url") or (
+            f"https://www.youtube.com/watch?v={video_metadata.get('id', '')}"
+        )
+        graph["meta"] = {
+            "videoUrl": video_url,
+            "title": video_metadata.get("title", ""),
+            "channel": video_metadata.get("channel", ""),
+            "lang": event.payload.get("lang", ""),
+            "destination_hint": event.payload.get("destination_hint", ""),
+            "extract_model": event.payload.get("extract_model", ""),
+        }
+        payload = {"source_type": "youtube_kg", "graph": graph}
+        mark_processed(key)
+        return EmbeddingsReady(
+            event_id=str(uuid4()),
+            content_source_id=event.content_source_id,
+            stage="embeddings",
+            payload=payload,
+            retry_count=event.retry_count,
+            max_retries=event.max_retries,
+            error=event.error,
+        )
+
     mark_processed(key)
     return EmbeddingsReady(
         event_id=str(uuid4()),
@@ -325,6 +418,15 @@ def handle_write(event: WriteComplete) -> None:
         cards_data = event.payload.get("cards", [])
         cards = [ProductCardModel(**c) for c in cards_data]
         write_products_to_weaviate(products=products, cards=cards)
+        mark_processed(key)
+        _write_events.append({"content_source_id": event.content_source_id, "event_id": event.event_id})
+        return
+
+    if source_type == "youtube_kg":
+        from app.sources.graph import ingest_into_neo4j
+        graph = event.payload.get("graph")
+        if graph:
+            ingest_into_neo4j(graph)
         mark_processed(key)
         _write_events.append({"content_source_id": event.content_source_id, "event_id": event.event_id})
         return

@@ -7,8 +7,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,25 +71,74 @@ def vtt_to_segments(vtt_text: str) -> list[dict[str, Any]]:
 
 
 def _lang_preference(lang_hint: LangCode) -> list[str]:
+    # Try English variants first (many auto-generated subs); then Spanish, then Portuguese.
+    fallback = ["en", "en-US", "en-GB", "es", "pt", "pt-BR", "pt-PT"]
     if lang_hint == "auto":
-        return ["pt", "pt-BR", "pt-PT", "en", "es"]
+        return fallback
     if lang_hint == "pt":
-        return ["pt", "pt-BR", "pt-PT", "en", "es"]
+        return ["pt", "pt-BR", "pt-PT", "en", "en-US", "es"]
+    if lang_hint == "en":
+        return ["en", "en-US", "en-GB", "es", "pt", "pt-BR", "pt-PT"]
+    if lang_hint == "es":
+        return ["es", "en", "en-US", "pt", "pt-BR", "pt-PT"]
     return [lang_hint, "en", "es", "pt", "pt-BR", "pt-PT"]
 
 
+_ytdlp_cookies_logged: bool = False
+
+
 def _ytdlp_cookie_args() -> list[str]:
-    """If YTDLP_COOKIES_FILE is set and the file exists, return --cookies <path> args."""
+    """If YTDLP_COOKIES_FILE is set and the file exists, return --cookies <path> args.
+    Resolves relative paths against cwd and repo root (../.. from services/ingestion) so
+    .env with configs/cookies.txt works when the worker runs from services/ingestion.
+    """
+    global _ytdlp_cookies_logged
+    import sys
     path = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
-    if path and Path(path).is_file():
+    if not path:
+        if not _ytdlp_cookies_logged:
+            print("yt-dlp: no cookies (YTDLP_COOKIES_FILE not set)", file=sys.stderr)
+            _ytdlp_cookies_logged = True
+        return []
+    if Path(path).is_file():
+        if not _ytdlp_cookies_logged:
+            print("yt-dlp: using cookies", file=sys.stderr)
+            _ytdlp_cookies_logged = True
         return ["--cookies", path]
+    # Try relative to cwd, then relative to repo root (assume cwd is services/ingestion)
+    cwd = Path.cwd()
+    for base in [cwd, cwd.parent.parent]:
+        candidate = base / path
+        if candidate.is_file():
+            if not _ytdlp_cookies_logged:
+                print("yt-dlp: using cookies", file=sys.stderr)
+                _ytdlp_cookies_logged = True
+            return ["--cookies", str(candidate.resolve())]
+    if not _ytdlp_cookies_logged:
+        print("yt-dlp: no cookies file found (file missing)", file=sys.stderr)
+        _ytdlp_cookies_logged = True
+    return []
+
+
+def _ytdlp_cmd() -> list[str]:
+    """Base command to run yt-dlp via current Python so the ingestion venv is used."""
+    return [sys.executable, "-m", "yt_dlp"]
+
+
+def _ytdlp_js_runtime_args() -> list[str]:
+    """Return --js-runtimes RUNTIME if deno or node is on PATH (needed for YouTube extraction)."""
+    if shutil.which("deno"):
+        return ["--js-runtimes", "deno"]
+    if shutil.which("node"):
+        return ["--js-runtimes", "node"]
     return []
 
 
 def get_video_metadata(video_url: str) -> dict[str, Any]:
     """Get video metadata via yt-dlp --dump-single-json."""
     cmd = [
-        "yt-dlp",
+        *_ytdlp_cmd(),
+        *_ytdlp_js_runtime_args(),
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
@@ -104,6 +156,8 @@ def get_video_metadata(video_url: str) -> dict[str, Any]:
 def fetch_subtitles_via_ytdlp(video_url: str, lang_hint: LangCode) -> tuple[list[dict[str, Any]], str]:
     """Fetch VTT subtitles and parse to segments. Returns (segments, chosen_lang)."""
     langs = _lang_preference(lang_hint)
+    last_returncode: int | None = None
+    last_stderr: str = ""
     with tempfile.TemporaryDirectory() as td:
         for lang in langs:
             for f in Path(td).glob("*"):
@@ -112,7 +166,8 @@ def fetch_subtitles_via_ytdlp(video_url: str, lang_hint: LangCode) -> tuple[list
                 except Exception:
                     pass
             cmd = [
-                "yt-dlp",
+                *_ytdlp_cmd(),
+                *_ytdlp_js_runtime_args(),
                 "--skip-download",
                 "--write-auto-subs",
                 "--write-subs",
@@ -120,22 +175,41 @@ def fetch_subtitles_via_ytdlp(video_url: str, lang_hint: LangCode) -> tuple[list
                 "--sub-format", "vtt",
                 "--no-check-formats",
                 "--ignore-no-formats-error",
-                "-o", str(Path(td) / "%(id)s.%(ext)s"),
+                "-o", "%(id)s.%(ext)s",
                 *_ytdlp_cookie_args(),
                 video_url,
             ]
             try:
-                subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
-            except subprocess.CalledProcessError:
+                # Run with cwd=td so subtitles are written into our temp dir (yt-dlp may use cwd when -o is for video only)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=td)
+                last_returncode = result.returncode
+                last_stderr = result.stderr or ""
+            except subprocess.TimeoutExpired:
                 continue
-            vtts = list(Path(td).glob("*.vtt"))
+            # Accept subtitles even if yt-dlp exited non-zero (e.g. "Requested format not available" after writing subs)
+            vtts = list(Path(td).glob("*.vtt")) or list(Path(td).rglob("*.vtt"))
             if not vtts:
                 continue
             vtt_text = vtts[0].read_text(encoding="utf-8", errors="ignore")
             segs = vtt_to_segments(vtt_text)
             if segs:
                 return segs, lang
-    raise RuntimeError("No subtitles available via yt-dlp for preferred languages.")
+    # Debug: when rc=0 but no vtt found, list temp dir and last yt-dlp stderr
+    if last_returncode == 0:
+        try:
+            contents = list(Path(td).iterdir()) if Path(td).exists() else []
+            names = [f.name for f in contents]
+            print(f"yt-dlp subs: rc=0 but no *.vtt in td; dir contents: {names}", file=sys.stderr)
+            if last_stderr.strip():
+                print(f"yt-dlp stderr (last run): {last_stderr.strip()!r}", file=sys.stderr)
+        except Exception:
+            pass
+    print(f"yt-dlp subs: tried {len(langs)} langs, last rc={last_returncode}", file=sys.stderr)
+    raise RuntimeError(
+        "No subtitles available via yt-dlp. If stderr shows 'No supported JavaScript runtime', "
+        "install deno or node (https://github.com/yt-dlp/yt-dlp/wiki/EJS). "
+        "If 'rate-limited by YouTube', set YTDLP_SLEEP_SECONDS=3 (or higher) and retry after a while."
+    )
 
 
 def fetch_youtube_transcript(
@@ -147,6 +221,13 @@ def fetch_youtube_transcript(
     Returns (segments, chosen_lang, video_metadata).
     video_metadata: id, title, channel, upload_date, webpage_url (for Weaviate).
     """
+    # Optional delay between videos to avoid YouTube rate limiting (env: YTDLP_SLEEP_SECONDS)
+    try:
+        sec = float(os.environ.get("YTDLP_SLEEP_SECONDS", "0") or "0")
+        if sec > 0:
+            time.sleep(sec)
+    except (TypeError, ValueError):
+        pass
     meta = get_video_metadata(video_url)
     segments, chosen_lang = fetch_subtitles_via_ytdlp(video_url, language_hint)
     video_id = meta.get("id") or _extract_video_id(meta.get("webpage_url", "")) or ""

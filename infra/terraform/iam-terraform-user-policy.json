@@ -70,6 +70,7 @@
       "Action": [
         "sqs:CreateQueue",
         "sqs:DeleteQueue",
+        "sqs:PurgeQueue",
         "sqs:GetQueueAttributes",
         "sqs:SetQueueAttributes",
         "sqs:GetQueueUrl",

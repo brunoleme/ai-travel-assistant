@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/graph_rag.schema.json",
+  "title": "GraphRAGResponse",
+  "description": "Response from mcp-travel-graph (Graph RAG over Neo4j): subgraph and evidence for itinerary/routes/POI-order queries.",
+  "type": "object",
+  "required": ["x_contract_version", "request", "subgraph"],
+  "additionalProperties": false,
+  "properties": {
+    "x_contract_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "request": {
+      "type": "object",
+      "required": ["user_query"],
+      "additionalProperties": false,
+      "properties": {
+        "user_query": { "type": "string", "minLength": 1 },
+        "destination": { "type": ["string", "null"] },
+        "lang": { "type": ["string", "null"] },
+        "limit": { "type": ["integer", "null"], "minimum": 1, "maximum": 50, "description": "Max nodes or paths to return" },
+        "debug": { "type": "boolean", "default": false }
+      }
+    },
+    "subgraph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GraphNode" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GraphEdge" }
+        }
+      }
+    },
+    "paths": {
+      "type": ["array", "null"],
+      "description": "Ordered paths (e.g. itinerary day sequences) for narrative answers",
+      "items": {
+        "type": "object",
+        "required": ["path_id", "nodes", "edges", "evidence"],
+        "properties": {
+          "path_id": { "type": "string" },
+          "label": { "type": ["string", "null"] },
+          "nodes": { "type": "array", "items": { "type": "string" } },
+          "edges": { "type": "array", "items": { "type": "string" } },
+          "evidence": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/Evidence" }
+          }
+        }
+      }
+    },
+    "debug": {
+      "type": ["object", "null"],
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "GraphNode": {
+      "type": "object",
+      "required": ["id", "type", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 2 },
+        "type": { "type": "string", "enum": ["city", "place", "poi", "itinerary", "dayplan", "activity_type", "advice", "constraint"] },
+        "name": { "type": "string", "minLength": 1 },
+        "aliases": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "properties": { "type": "object", "additionalProperties": true, "default": {} }
+      }
+    },
+    "GraphEdge": {
+      "type": "object",
+      "required": ["source", "type", "target", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string" },
+        "type": { "type": "string" },
+        "target": { "type": "string" },
+        "properties": { "type": "object", "additionalProperties": true, "default": {} },
+        "evidence": { "$ref": "#/$defs/Evidence" }
+      }
+    },
+    "Evidence": {
+      "type": "object",
+      "required": ["videoUrl", "timestampUrl", "startSec", "endSec"],
+      "additionalProperties": false,
+      "properties": {
+        "videoUrl": { "type": "string", "minLength": 8 },
+        "timestampUrl": { "type": "string", "minLength": 8 },
+        "startSec": { "type": "integer", "minimum": 0 },
+        "endSec": { "type": "integer", "minimum": 0 },
+        "chunkIdx": { "type": ["integer", "null"] }
+      }
+    }
+  }
+}

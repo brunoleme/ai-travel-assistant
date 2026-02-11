@@ -97,6 +97,33 @@ Example response:
 - **avg_latency_ms** – Mean latency per request since process start. Cache hits are fast (~5–20 ms); misses are slower (Weaviate + rerank).
 - **Cache hit rate** = `cache_hits_total / requests_total` when `requests_total > 0`.
 
+## Neo4j (youtube_kg / Graph ingestion)
+
+The ingestion worker writes the **youtube_kg** pipeline (graph extraction) to Neo4j. If Neo4j runs on another host (e.g. Neo4j Aura or a separate server), do the following.
+
+**1. Get this host’s public IP** (to allowlist on Neo4j):
+
+```bash
+curl -s https://checkip.amazonaws.com
+```
+
+**2. Open the door on the Neo4j side**
+
+- **Neo4j Aura:** In the Aura console, add this IP to the IP allowlist for your database (or allow 0.0.0.0/0 for dev only).
+- **Self‑hosted / firewall:** Allow inbound TCP **7687** (Bolt) from the IP above (e.g. security group or iptables).
+
+**3. Point config at the Neo4j server**
+
+In `configs/.env`, set `NEO4J_URI` to the Neo4j host (not `localhost` if Neo4j is remote):
+
+```bash
+NEO4J_URI=bolt://YOUR_NEO4J_HOST:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+```
+
+Restart the ingestion worker after changing `.env`.
+
 ## LangSmith Tracing
 
 `LANGSMITH_ENABLED=0` disables trace upload; the system works normally. When set to `1`, traces are sent to LangSmith (requires valid `LANGSMITH_API_KEY`). A 403 from LangSmith upload does not affect eval or agent behavior.
