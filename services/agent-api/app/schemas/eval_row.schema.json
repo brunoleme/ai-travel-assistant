@@ -14,6 +14,9 @@
     "latency_ms_products",
     "latency_ms_graph",
     "graph_included",
+    "latency_ms_vision",
+    "vision_included",
+    "vision_mode",
     "citations_count",
     "product_included",
     "groundedness_proxy",
@@ -81,6 +84,20 @@
     "graph_included": {
       "type": "boolean",
       "description": "True when graph MCP was called"
+    },
+    "latency_ms_vision": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Vision MCP call latency (0 if not called)"
+    },
+    "vision_included": {
+      "type": "boolean",
+      "description": "True when vision MCP was called"
+    },
+    "vision_mode": {
+      "type": ["string", "null"],
+      "enum": ["packing", "landmark", "product_similarity", null],
+      "description": "Vision mode when vision was called"
     },
     "citations_count": {
       "type": "integer",

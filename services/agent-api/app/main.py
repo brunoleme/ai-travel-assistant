@@ -14,6 +14,7 @@ from app.feedback_store import append_jsonl
 from app.guardrails import validate_and_fix
 from app.mcp_client import (
     MCPConfig,
+    analyze_image,
     retrieve_product_candidates,
     retrieve_travel_evidence,
     retrieve_travel_graph,
@@ -61,12 +62,108 @@ def _should_call_graph(user_query: str) -> bool:
     return any(kw in q for kw in GRAPH_QUERY_KEYWORDS)
 
 
+# Routing: infer vision mode from user_query (packing | landmark | product_similarity).
+PACKING_KEYWORDS = ("packing", "outfit", "clothes", "suitcase", "malas", "roupas", "levar", "levar o que")
+LANDMARK_KEYWORDS = ("where is this", "landmark", "place", "onde é", "que lugar", "qual lugar", "o que é isso")
+PRODUCT_SIMILARITY_KEYWORDS = ("like this", "similar", "find one like", "parecido", "igual a", "encontre um como")
+
+# Critical packing gaps: recommend product when missing + context matches.
+CRITICAL_GAP_RULES = (
+    ({"rain_jacket"}, {"rain_risk": ["medium", "high"]}),
+    ({"umbrella"}, {"rain_risk": ["high"]}),
+    ({"sun_protection"}, {"uv_risk": ["high"]}),
+)
+
+
+def _get_packing_gap_query(
+    missing_categories: list[str],
+    trip_context: dict | None,
+    suggested_categories_for_products: list[str] | None = None,
+    suitability_ok: bool | None = None,
+) -> str | None:
+    """Return query_signature for products when outfit suggests recommendations (suggested categories or critical gap)."""
+    ctx = trip_context or {}
+    dest = ctx.get("destination") or "any"
+    # Prefer suggested categories from vision (outfit not suitable or user wants recommendations)
+    if suggested_categories_for_products and (suitability_ok is False or suitability_ok is None):
+        first = next((c for c in suggested_categories_for_products if c), None)
+        if first:
+            return f"{dest}:{first}:en"
+    # Fall back to critical gap rules (missing + context)
+    missing_set = set(missing_categories or [])
+    for gap_items, ctx_reqs in CRITICAL_GAP_RULES:
+        if not gap_items & missing_set:
+            continue
+        for key, valid in ctx_reqs.items():
+            if ctx.get(key) in valid:
+                item = next(iter(gap_items & missing_set))
+                return f"{dest}:{item}:en"
+    return None
+
+
+def _infer_vision_mode(user_query: str) -> str:
+    """Infer vision mode from user_query; default packing."""
+    q = user_query.lower().strip()
+    if any(kw in q for kw in PRODUCT_SIMILARITY_KEYWORDS):
+        return "product_similarity"
+    if any(kw in q for kw in LANDMARK_KEYWORDS):
+        return "landmark"
+    return "packing"
+
+
 def _build_answer_and_citations(
     evidence: list[dict],
     graph_response: dict[str, Any] | None = None,
+    vision_response: dict[str, Any] | None = None,
+    trip_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[str]]:
     citations: list[str] = []
     parts: list[str] = []
+
+    if vision_response:
+        sig = vision_response.get("signals") or {}
+        mode = sig.get("mode", "packing")
+        if mode == "packing":
+            detected = sig.get("detected_items") or []
+            missing = sig.get("missing_categories") or []
+            suitability_ok = sig.get("suitability_ok")
+            suitability_issue = sig.get("suitability_issue") or ""
+            suggested = sig.get("suggested_categories_for_products") or []
+            if suitability_ok is True:
+                parts.append("This outfit looks suitable for your trip.")
+            elif suitability_ok is False and suitability_issue:
+                parts.append(f"This outfit may not be ideal: {suitability_issue}")
+            if detected:
+                parts.append("Detected: " + ", ".join(detected[:8]) + ".")
+            if suggested:
+                parts.append("Consider adding: " + ", ".join(suggested[:5]) + ".")
+            elif missing:
+                parts.append("Consider adding for your trip: " + ", ".join(missing[:5]) + ".")
+            if not detected and not missing and suitability_ok is None:
+                parts.append("Could not clearly detect travel items. Pack according to your trip context.")
+        elif mode == "landmark":
+            candidates = sig.get("place_candidates") or []
+            scene = sig.get("scene_type") or "place"
+            if candidates:
+                top = candidates[0]
+                name = top.get("place_name", "") if isinstance(top, dict) else getattr(top, "place_name", "")
+                conf = top.get("confidence") if isinstance(top, dict) else getattr(top, "confidence", None)
+                if conf and conf >= 0.6:
+                    parts.append(f"Parece ser {name}. Quer dicas do que fazer por perto?")
+                else:
+                    parts.append(f"Possívelmente {name} ou local similar ({scene}). Quer que eu sugira o que fazer por perto?")
+            else:
+                parts.append(f"Parece um local do tipo {scene}. Quer dicas do que fazer por perto?")
+        elif mode == "product_similarity":
+            cat = sig.get("category") or "item"
+            attrs = sig.get("attributes") or {}
+            kw = sig.get("style_keywords") or []
+            desc_parts = [cat]
+            if attrs:
+                desc_parts.append(", ".join(f"{k}: {v}" for k, v in list(attrs.items())[:3]))
+            if kw:
+                desc_parts.append("style: " + ", ".join(kw[:3]))
+            parts.append("Produtos similares: " + "; ".join(desc_parts) + ".")
 
     if evidence:
         summaries = [e["summary"] for e in evidence]
@@ -104,10 +201,12 @@ async def run_pipeline_raw(
     user_query: str,
     destination: str | None = None,
     lang: str | None = None,
+    image_ref: str | None = None,
+    trip_context: dict[str, Any] | None = None,
     timing_out: dict[str, float] | None = None,
     tracer: Tracer | None = None,
 ) -> dict[str, Any]:
-    """Run the agent pipeline (knowledge + products + addon) and return response before guardrails."""
+    """Run the agent pipeline (knowledge + products + graph + vision) and return response before guardrails."""
     if tracer is None:
         tracer = get_tracer()
     tags = {
@@ -130,9 +229,38 @@ async def run_pipeline_raw(
     t_knowledge = 0.0
     t_products = 0.0
     t_graph = 0.0
+    t_vision = 0.0
     graph_resp: dict[str, Any] | None = None
+    vision_resp: dict[str, Any] | None = None
+    vision_mode: str | None = None
+
+    ctx = trip_context or {}
+    if destination:
+        ctx.setdefault("destination", destination)
 
     async with httpx.AsyncClient(timeout=config.timeout_s) as client:
+        if image_ref:
+            mode = _infer_vision_mode(user_query)
+            vision_mode = mode
+            with tracer.span("vision_mcp_call", tags):
+                vision_req = {
+                    "image_ref": image_ref,
+                    "mode": mode,
+                    "trip_context": ctx if ctx else None,
+                    "user_query": user_query,
+                    "lang": lang,
+                }
+                t0 = time.perf_counter()
+                try:
+                    vision_resp = await analyze_image(
+                        client, config.vision_base_url, vision_req
+                    )
+                except Exception:
+                    vision_resp = None
+                t_vision = (time.perf_counter() - t0) * 1000
+            if vision_resp is not None:
+                validate_or_raise(vision_resp, "vision_signals.schema.json")
+
         with tracer.span("answer_generation", tags):
             t0 = time.perf_counter()
             try:
@@ -164,11 +292,27 @@ async def run_pipeline_raw(
             if graph_resp is not None:
                 validate_or_raise(graph_resp, "graph_rag.schema.json")
 
-        answer_text, citations = _build_answer_and_citations(evidence, graph_resp)
+        answer_text, citations = _build_answer_and_citations(
+            evidence, graph_resp, vision_resp, ctx
+        )
 
         with tracer.span("product_decision", tags):
+            query_sig = _build_query_signature(user_query, destination, lang, session_id)
+            if vision_resp and vision_mode == "product_similarity":
+                sig = (vision_resp.get("signals") or {}).get("search_queries") or []
+                if sig:
+                    query_sig = f"{destination or 'any'}:{sig[0][:80]}:{lang or 'en'}"
+            elif vision_resp and vision_mode == "packing":
+                sig = vision_resp.get("signals") or {}
+                missing = sig.get("missing_categories") or []
+                suggested = sig.get("suggested_categories_for_products") or []
+                suitability_ok = sig.get("suitability_ok")
+                gap_query = _get_packing_gap_query(missing, ctx, suggested, suitability_ok)
+                if gap_query:
+                    query_sig = gap_query
+
             prod_req = {
-                "query_signature": _build_query_signature(user_query, destination, lang, session_id),
+                "query_signature": query_sig,
                 "destination": destination,
                 "lang": lang,
             }
@@ -184,14 +328,33 @@ async def run_pipeline_raw(
         validate_or_raise(prod_resp, "product_candidates.schema.json")
         candidates = prod_resp.get("candidates", [])
         addon = None
-        if candidates and _is_commercial_query(user_query):
+        want_addon = _is_commercial_query(user_query)
+        if not want_addon and vision_resp and vision_mode == "product_similarity":
+            want_addon = bool(candidates)
+        if not want_addon and vision_resp and vision_mode == "packing":
+            sig = vision_resp.get("signals") or {}
+            missing = sig.get("missing_categories") or []
+            suggested = sig.get("suggested_categories_for_products") or []
+            suitability_ok = sig.get("suitability_ok")
+            want_addon = (
+                _get_packing_gap_query(missing, ctx, suggested, suitability_ok) is not None
+                and bool(candidates)
+            )
+        if candidates and want_addon:
             top = candidates[0]
             addon = {"product_id": top["product_id"], "summary": top["summary"], "link": top["link"], "merchant": top["merchant"]}
+
+        if vision_mode == "product_similarity" and candidates:
+            opts = [f"{c.get('summary', '')[:80]}..." for c in candidates[:6]]
+            if opts:
+                answer_text = answer_text.rstrip() + " Opções: " + " | ".join(opts)
 
     if timing_out is not None:
         timing_out["knowledge_ms"] = t_knowledge
         timing_out["products_ms"] = t_products
         timing_out["graph_ms"] = t_graph
+        timing_out["vision_ms"] = t_vision
+        timing_out["vision_mode"] = vision_mode
         timing_out["total_ms"] = (time.perf_counter() - t_start) * 1000
 
     return {
@@ -219,9 +382,13 @@ async def ws_endpoint(ws: WebSocket) -> None:
             user_query = msg.get("user_query", "")
             destination = msg.get("destination")
             lang = msg.get("lang")
+            image_ref = msg.get("image_ref") or msg.get("image")
+            trip_context = msg.get("trip_context")
 
             response = await run_pipeline_raw(
-                session_id, request_id, user_query, destination, lang
+                session_id, request_id, user_query,
+                destination=destination, lang=lang,
+                image_ref=image_ref, trip_context=trip_context,
             )
             response = validate_and_fix(response, user_query)
             await ws.send_json(response)

@@ -67,6 +67,19 @@
           "items": { "type": "string" },
           "description": "Packing mode: critical missing categories for trip context"
         },
+        "suitability_ok": {
+          "type": ["boolean", "null"],
+          "description": "Outfit mode: true if outfit is suitable for context, false otherwise"
+        },
+        "suitability_issue": {
+          "type": ["string", "null"],
+          "description": "Outfit mode: short reason when not suitable (e.g. too light for winter)"
+        },
+        "suggested_categories_for_products": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Outfit mode: 18-item categories to suggest as product recommendations when relevant"
+        },
         "scene_type": {
           "type": ["string", "null"],
           "enum": ["landmark", "street", "beach", "mountain", "museum", "airport", "restaurant", "hotel", "transit", "urban", "nature", null],

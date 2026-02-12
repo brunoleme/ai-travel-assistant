@@ -9,6 +9,7 @@ AGENT_DIR := services/agent-api
 KNOW_DIR  := services/mcp-travel-knowledge
 PROD_DIR  := services/mcp-travel-products
 GRAPH_DIR := services/mcp-travel-graph
+VISION_DIR := services/mcp-travel-vision
 ING_DIR   := services/ingestion
 TF_DIR    := infra/terraform
 
@@ -21,12 +22,14 @@ help:
 	@echo "  make fmt                        - Format all python services"
 	@echo "  make lint                       - Lint all python services"
 	@echo "  make test                       - Run unit tests for all services"
-	@echo "  make test-agent | test-knowledge | test-products | test-graph | test-ingestion"
+	@echo "  make test-agent | test-knowledge | test-products | test-graph | test-vision | test-ingestion"
 	@echo "  make run-agent                   - Run FastAPI agent runtime"
 	@echo "  make run-knowledge               - Run MCP travel-knowledge server"
 	@echo "  make run-products                - Run MCP travel-products server"
 	@echo "  make run-graph                   - Run MCP travel-graph server"
+	@echo "  make run-vision                 - Run MCP travel-vision server"
 	@echo "  make eval                        - Run eval harness, write to data/eval/run.jsonl"
+	@echo "  make eval-vision                 - Run vision eval (15 queries), write to data/eval/run_vision.jsonl"
 	@echo "  make run-ingestion               - Run ingestion worker (local mode)"
 	@echo "  make send-graph URL=... DESTINATION_HINT=...  - Enqueue one youtube_kg (Neo4j) job"
 	@echo "  make send-playlist URL=... DESTINATION=... PLAYLIST_NAME=...  - Enqueue playlist (Weaviate)"
@@ -34,8 +37,8 @@ help:
 	@echo ""
 
 # ---- Bootstrap ----
-.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-graph sync-ingestion
-bootstrap: sync-agent sync-knowledge sync-products sync-graph sync-ingestion
+.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-graph sync-vision sync-ingestion
+bootstrap: sync-agent sync-knowledge sync-products sync-graph sync-vision sync-ingestion
 
 sync-agent:
 	@echo "==> Sync $(AGENT_DIR) (with dev extras)"
@@ -53,6 +56,10 @@ sync-graph:
 	@echo "==> Sync $(GRAPH_DIR) (with dev extras)"
 	@cd $(GRAPH_DIR) && $(UV) sync --extra dev
 
+sync-vision:
+	@echo "==> Sync $(VISION_DIR) (with dev extras)"
+	@cd $(VISION_DIR) && $(UV) sync --extra dev
+
 sync-ingestion:
 	@echo "==> Sync $(ING_DIR) (with dev extras)"
 	@cd $(ING_DIR) && $(UV) sync --extra dev
@@ -64,6 +71,7 @@ fmt: bootstrap
 	@cd $(KNOW_DIR)  && $(PY) ruff format .
 	@cd $(PROD_DIR)  && $(PY) ruff format .
 	@cd $(GRAPH_DIR) && $(PY) ruff format .
+	@cd $(VISION_DIR) && $(PY) ruff format .
 	@cd $(ING_DIR)   && $(PY) ruff format .
 
 lint: bootstrap
@@ -71,9 +79,10 @@ lint: bootstrap
 	@cd $(KNOW_DIR)  && $(PY) ruff check .
 	@cd $(PROD_DIR)  && $(PY) ruff check .
 	@cd $(GRAPH_DIR) && $(PY) ruff check .
+	@cd $(VISION_DIR) && $(PY) ruff check .
 	@cd $(ING_DIR)   && $(PY) ruff check .
 
-test: test-agent test-knowledge test-products test-graph test-ingestion
+test: test-agent test-knowledge test-products test-graph test-vision test-ingestion
 
 test-agent: sync-agent
 	@cd $(AGENT_DIR) && $(PY) python -m pytest -q
@@ -87,6 +96,9 @@ test-products: sync-products
 test-graph: sync-graph
 	@cd $(GRAPH_DIR) && $(PY) python -m pytest -q
 
+test-vision: sync-vision
+	@cd $(VISION_DIR) && $(PY) python -m pytest -q
+
 test-ingestion: sync-ingestion
 	@cd $(ING_DIR) && $(PY) python -m pytest -q
 
@@ -94,7 +106,7 @@ test-ingestion: sync-ingestion
 # Load configs/.env so WEAVIATE_* etc. are set (run from repo root)
 ENV_FILE := configs/.env
 
-.PHONY: run-agent run-knowledge run-products run-graph run-ingestion
+.PHONY: run-agent run-knowledge run-products run-graph run-vision run-ingestion
 run-agent: sync-agent
 	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8000
 
@@ -106,6 +118,9 @@ run-products: sync-products
 
 run-graph: sync-graph
 	@cd $(GRAPH_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8031
+
+run-vision: sync-vision
+	@cd $(VISION_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8032
 
 run-ingestion: sync-ingestion
 	@cd $(ING_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.main
@@ -120,9 +135,15 @@ send-graph: sync-ingestion
 send-playlist: sync-ingestion
 	@set -a && . $(ENV_FILE) && set +a && cd $(ING_DIR) && $(PY) python ../../scripts/send_playlist_ingestion.py "$(URL)" --destination "$(DESTINATION)" --playlist-name "$(PLAYLIST_NAME)"
 
-.PHONY: eval
+.PHONY: eval eval-vision
 eval: sync-agent
 	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.eval_runner --out ../../data/eval/run.jsonl
+
+# Vision eval: prepare 15 vision queries, run eval, write run_vision.jsonl
+eval-vision: sync-agent
+	@cd $(AGENT_DIR) && $(PY) python ../../scripts/prepare_vision_eval_queries.py --out data/eval/vision_queries.json
+	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && \
+		TEST_QUERIES_FILE=data/eval/vision_queries.json $(PY) python -m app.eval_runner --out ../../data/eval/run_vision.jsonl
 
 # ---- Terraform ----
 .PHONY: tf-fmt tf-validate tf-init-backend tf-plan tf-apply

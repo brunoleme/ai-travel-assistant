@@ -1,6 +1,6 @@
 # Phase 6 — Vision MCP + Multimodal Agent
 
-**Goal:** Add an MCP that analyzes images via a vision model (gpt-4.1-mini) and produces structured signals for three use cases: (4) outfit + weather packing, (5) landmark / place recognition, (7) product similarity via attribute extraction. The agent runtime routes image-bearing messages to the vision MCP, then uses signals for advice and optional product search.
+**Goal:** Add an MCP that analyzes images via a vision model (gpt-4.1-mini) and produces structured signals for three use cases: (4) **outfit suitability** (judge outfit for context, e.g. Disney summer/winter, and suggest product categories when relevant), (5) landmark / place recognition, (7) product similarity via attribute extraction. The agent runtime routes image-bearing messages to the vision MCP, passes **user_query** into prompts, then uses signals for advice and optional product recommendations.
 
 **Scope:**
 - New service: **mcp-travel-vision** (same structure as mcp-travel-knowledge / mcp-travel-products).
@@ -17,10 +17,10 @@
 
 **File:** `contracts/vision_signals.schema.json`
 
-- **Request:** `image_ref` (data URL or HTTP URL), `mode` (`packing` | `landmark` | `product_similarity`), optional `trip_context`, optional `user_query`, optional `lang`, `debug`.
+- **Request:** `image_ref` (data URL or HTTP URL), `mode` (`packing` | `landmark` | `product_similarity`), optional `trip_context`, optional `user_query` (passed into vision prompts for packing and landmark), optional `lang`, `debug`.
 - **Response:** `x_contract_version`, `request` (echo), `signals` (VisionSignals), optional `debug`.
 - **VisionSignals:** `mode`, `confidence`, optional `error`.
-  - **Packing mode:** `detected_items` (array of category strings from 18-item set), `missing_categories`.
+  - **Packing / outfit mode:** `detected_items` (array of category strings from 18-item set), `missing_categories`, **`suitability_ok`** (boolean: true if outfit suitable for context), **`suitability_issue`** (string: reason when not suitable), **`suggested_categories_for_products`** (array from 18-item set: categories to recommend when relevant).
   - **Landmark mode:** `scene_type`, `ocr_text`, `distinctive_features`, `language_hint`, `place_candidates` (array of `{place_name, confidence, reason}`).
   - **Product_similarity mode:** `category`, `attributes`, `style_keywords`, `search_queries` (2–3 marketplace query strings).
 
@@ -39,7 +39,7 @@ Consumers (mcp-travel-vision and agent-api) MUST validate responses against this
 Structure aligned with mcp-travel-knowledge / mcp-travel-products:
 - `app/main.py` — FastAPI, `/health`, `/metrics`, `POST /mcp/analyze_image`.
 - `app/vision.py` — Call OpenAI vision API (gpt-4.1-mini) with image + mode-specific prompts; parse structured JSON from model output.
-- `app/prompts.py` — Prompt templates per mode (packing, landmark, product_similarity) returning strict JSON.
+- `app/prompts.py` — Prompt templates per mode (packing/outfit, landmark, product_similarity) returning strict JSON; **user_query** included in packing and landmark user messages.
 - `app/models.py` — Pydantic models matching vision_signals.schema.json.
 - `app/cache.py` — Cache key: hash(image_ref) + mode + trip_context_snapshot; TTL cache (vision calls are costly).
 - `app/metrics.py` — request_count, error_count, latency_ms, cache_hit.
@@ -53,17 +53,16 @@ Structure aligned with mcp-travel-knowledge / mcp-travel-products:
 - Add Make target in root Makefile (sync-vision, run-vision, test-vision) mirroring knowledge/products/graph.
 - **Tests:** Contract validation test (response matches vision_signals.schema.json).
 
-### Ticket V2 — Vision analysis (packing mode)
+### Ticket V2 — Vision analysis (packing / outfit mode)
 **Owner:** services/mcp-travel-vision
-- Implement packing mode: send image + trip_context to gpt-4.1-mini with structured prompt; output `detected_items` (from 18-item set), `missing_categories`.
-- Prompt: "List detected clothing/item categories from the 18-item travel set. Infer missing categories for the given trip context. Output JSON only."
-- Adapter: map model output to VisionSignals; validate against schema; on parse failure set `error` and `confidence=0`.
-- **Tests:** Unit test with mocked OpenAI client; response validates; parse failure returns valid schema with error.
+- Implement outfit mode: send image + **user_query** + trip_context to gpt-4.1-mini; judge suitability for context and suggest product categories when relevant.
+- Prompt: Include user question (e.g. "Is this outfit okay for Disney in summer?"). Output `detected_items`, `missing_categories`, **`suitability_ok`**, **`suitability_issue`**, **`suggested_categories_for_products`** (from 18-item set). Frame as comfort/weather, never appearance/body.
+- Adapter: map model output to VisionSignals; filter categories to 18-item set; on parse failure set `error` and `confidence=0`.
+- **Tests:** Unit test with mocked OpenAI client; response validates; parse failure returns valid schema with error; suitability and suggested_categories parsed.
 
 ### Ticket V3 — Vision analysis (landmark mode)
 **Owner:** services/mcp-travel-vision
-- Implement landmark mode: prompt for `scene_type`, `ocr_text`, `distinctive_features`, `place_candidates` (top 3).
-- Prompt: "Describe scene, extract text, list distinctive features, propose up to 3 place candidates with confidence."
+- Implement landmark mode: prompt for `scene_type`, `ocr_text`, `distinctive_features`, `place_candidates` (top 3). Pass **user_query** in user message (e.g. "Where is this place?", "What restaurant is this?").
 - **Tests:** Mocked OpenAI; response validates for landmark mode.
 
 ### Ticket V4 — Vision analysis (product_similarity mode)
@@ -88,7 +87,7 @@ Structure aligned with mcp-travel-knowledge / mcp-travel-products:
 - Config for vision MCP URL (e.g. `VISION_MCP_URL`, default http://127.0.0.1:8032).
 - **Routing:** When WS message includes `image_ref` (or `image` field), call vision MCP with appropriate `mode` (infer from user_query or default to `packing`).
 - **Integration:**
-  - Packing: pass vision signals + trip_context to answer builder; apply gap-detection policy; optionally recommend 1 product when critical gap exists (Feature 7 extension).
+  - **Packing / outfit:** Build answer from `suitability_ok`, `suitability_issue`, `detected_items`, and `suggested_categories_for_products` (or `missing_categories`). Recommend products when outfit not suitable or when suggested_categories_for_products / critical gap (e.g. rain_jacket + rain_risk) indicates need; use first suggested category for product query when present.
   - Landmark: use signals for place candidates; retrieve POIs/guides from knowledge or graph; answer + optional actions (transit, opening hours).
   - Product_similarity: use `search_queries` to call products MCP (or external search); return 3–6 options with "why this matches."
 - **Eval:** Record `latency_ms_vision` and `vision_included` in eval JSONL when vision is used.
@@ -105,12 +104,12 @@ Structure aligned with mcp-travel-knowledge / mcp-travel-products:
 - Infer `mode` from user_query: "packing"/"outfit"/"clothes"/"suitcase" → packing; "where is this"/"landmark"/"place" → landmark; "like this"/"similar"/"find one like" → product_similarity. Default: packing.
 - **Tests:** Message with image_ref → vision MCP called; message without image → vision not called. Mock MCPs.
 
-### Ticket AV3 — Integrate vision signals into answer (packing)
+### Ticket AV3 — Integrate vision signals into answer (packing / outfit)
 **Owner:** services/agent-api
-- When vision returns packing signals: build answer from detected_items + missing_categories + trip context.
-- Apply simple gap-detection policy (from Phase 6 design): recommend only when critical gap (rain_jacket + rain_risk, etc.).
+- When vision returns packing signals: build answer from **suitability_ok** / **suitability_issue** (e.g. "This outfit may not be ideal: …"), then detected_items and **suggested_categories_for_products** (or missing_categories) for "Consider adding".
+- Recommend products when **suggested_categories_for_products** is present and outfit not suitable, or when critical gap (rain_jacket + rain_risk, etc.) exists; product query uses first suggested category when available.
 - Frame advice as comfort/weather, never appearance/body.
-- **Tests:** Mocked vision packing response; answer contains packing advice; no recommendation when no critical gap.
+- **Tests:** Mocked vision packing response with suitability + suggested_categories; answer contains suitability message and suggested categories; product query from suggested_categories when not suitable.
 
 ### Ticket AV4 — Integrate vision signals (landmark)
 **Owner:** services/agent-api
@@ -154,7 +153,7 @@ Structure aligned with mcp-travel-knowledge / mcp-travel-products:
 ## 5. Acceptance criteria
 
 - [ ] mcp-travel-vision: `/health`, `/metrics`, `POST /mcp/analyze_image` return response validating against contracts/vision_signals.schema.json; unit tests with mocked OpenAI; cache and metrics in place.
-- [ ] Agent: For messages with image_ref, vision MCP is called; packing/landmark/product_similarity answers integrate signals correctly; eval row includes latency_ms_vision and vision_included.
+- [ ] Agent: For messages with image_ref, vision MCP is called with user_query in request; packing (outfit suitability)/landmark/product_similarity answers integrate signals correctly; product recommendations use suggested_categories_for_products when outfit not suitable; eval row includes latency_ms_vision and vision_included.
 - [ ] make test and make lint pass for agent-api and mcp-travel-vision.
 - [ ] No breaking changes to existing travel_evidence, product_candidates, or graph_rag contracts.
 
@@ -173,6 +172,6 @@ Port suggestion for mcp-travel-vision: **8032** (knowledge=8010, products=8020, 
 
 ## 7. UX rules (from design)
 
-- **Packing:** Frame as comfort + weather; never appearance/body. Recommend product only when critical gap; ask "Want me to suggest one?" before showing options.
-- **Landmark:** High confidence → answer directly; medium/low → ask 1 clarifying question. Recommend actions (transit, hours), not products, unless user signals need.
+- **Packing / outfit:** Judge outfit for context (e.g. Disney summer/winter); frame as comfort + weather, never appearance/body. When not suitable or user wants suggestions, use **suggested_categories_for_products** to recommend products (e.g. clothes); also recommend on critical gap (rain_jacket + rain_risk). Answer states suitability and "Consider adding" from suggested or missing categories.
+- **Landmark:** High confidence → answer directly; medium/low → ask 1 clarifying question. User query (e.g. "Where is this?", "What restaurant?") is passed to vision. Recommend actions (transit, hours), not products, unless user signals need.
 - **Product similarity:** Only trigger when user asked or accepted suggestion. Max 3–6 options; include "why this matches."

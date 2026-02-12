@@ -20,6 +20,9 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "eval_row.schema.jso
 
 
 def _load_queries() -> list[dict]:
+    queries_file = os.environ.get("TEST_QUERIES_FILE")
+    if queries_file and Path(queries_file).exists():
+        return json.loads(Path(queries_file).read_text(encoding="utf-8"))
     raw = os.environ.get("TEST_QUERIES_JSON")
     if raw:
         return json.loads(raw)
@@ -27,7 +30,7 @@ def _load_queries() -> list[dict]:
     if fallback.exists():
         return json.loads(fallback.read_text(encoding="utf-8"))
     raise FileNotFoundError(
-        "No queries: set TEST_QUERIES_JSON env or create data/eval/test_queries.json"
+        "No queries: set TEST_QUERIES_FILE, TEST_QUERIES_JSON, or create data/eval/test_queries.json"
     )
 
 
@@ -50,6 +53,8 @@ async def _run_one(
     destination = query.get("destination")
     lang = query.get("lang")
     market = query.get("market")
+    image_ref = query.get("image_ref")
+    trip_context = query.get("trip_context")
     session_id = f"eval-{run_id}-{uuid.uuid4().hex[:8]}"
     request_id = f"req-{uuid.uuid4().hex[:8]}"
 
@@ -60,6 +65,8 @@ async def _run_one(
         user_query=user_query,
         destination=destination,
         lang=lang,
+        image_ref=image_ref,
+        trip_context=trip_context,
         timing_out=timing,
     )
     final = validate_and_fix(raw, user_query)
@@ -90,6 +97,9 @@ async def _run_one(
         "latency_ms_products": timing.get("products_ms", 0),
         "latency_ms_graph": timing.get("graph_ms", 0),
         "graph_included": timing.get("graph_ms", 0) > 0,
+        "latency_ms_vision": timing.get("vision_ms", 0),
+        "vision_included": timing.get("vision_ms", 0) > 0,
+        "vision_mode": timing.get("vision_mode"),
         "citations_count": citations_count,
         "product_included": addon is not None,
         "groundedness_proxy": groundedness_proxy,
