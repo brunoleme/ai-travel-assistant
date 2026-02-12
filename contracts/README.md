@@ -2,7 +2,7 @@
 
 This folder contains versioned, service-agnostic schemas that define the data exchanged between:
 - Agent runtime (FastAPI/WebSockets)
-- MCP servers (travel-knowledge, travel-products)
+- MCP servers (travel-knowledge, travel-products, travel-vision, travel-graph)
 - Ingestion pipeline
 - Feedback pipeline
 - Evaluation harness

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/stt_transcript.schema.json",
+  "title": "STTTranscriptPack",
+  "description": "Response from mcp-travel-stt: speech-to-text transcript from audio input.",
+  "type": "object",
+  "required": ["x_contract_version", "request", "transcript"],
+  "additionalProperties": false,
+  "properties": {
+    "x_contract_version": { "type": "string", "const": "1.0" },
+    "request": {
+      "type": "object",
+      "required": ["audio_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "audio_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Audio as data URL (data:audio/...;base64,...) or HTTP(S) URL"
+        },
+        "language": {
+          "type": ["string", "null"],
+          "description": "Hint language (IETF tag e.g. en, pt-BR); null for auto-detect"
+        },
+        "debug": { "type": "boolean", "default": false }
+      }
+    },
+    "transcript": {
+      "type": "string",
+      "description": "Primary transcript text"
+    },
+    "language": {
+      "type": ["string", "null"],
+      "description": "Detected language (IETF tag)"
+    },
+    "confidence": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Transcription confidence"
+    },
+    "duration_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Input audio duration in seconds"
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message if transcription failed"
+    },
+    "debug": { "type": ["object", "null"], "additionalProperties": true }
+  }
+}

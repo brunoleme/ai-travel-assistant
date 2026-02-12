@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/vision_signals.schema.json",
+  "title": "VisionSignalsPack",
+  "description": "Response from mcp-travel-vision: structured signals from image analysis for packing, landmark, or product-similarity use cases.",
+  "type": "object",
+  "required": ["x_contract_version", "request", "signals"],
+  "additionalProperties": false,
+  "properties": {
+    "x_contract_version": { "type": "string", "const": "1.0" },
+    "request": {
+      "type": "object",
+      "required": ["image_ref", "mode"],
+      "additionalProperties": false,
+      "properties": {
+        "image_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Image as data URL (data:image/...;base64,...) or HTTP(S) URL"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["packing", "landmark", "product_similarity"],
+          "description": "Analysis mode: packing (outfit+weather), landmark (place recognition), product_similarity (attributes for search)"
+        },
+        "trip_context": {
+          "type": ["object", "null"],
+          "description": "For packing mode: destination, dates, trip_style, etc.",
+          "additionalProperties": true,
+          "properties": {
+            "destination": { "type": ["string", "null"] },
+            "month": { "type": ["string", "null"] },
+            "trip_length_days": { "type": ["integer", "null"], "minimum": 1 },
+            "trip_style": {
+              "type": ["string", "null"],
+              "enum": ["city_walk", "beach", "theme_parks", "nature", "business", "mixed", null]
+            },
+            "temp_band": { "type": ["string", "null"], "enum": ["hot", "mild", "cool", "cold", null] },
+            "rain_risk": { "type": ["string", "null"], "enum": ["low", "medium", "high", null] },
+            "uv_risk": { "type": ["string", "null"], "enum": ["low", "high", null] }
+          }
+        },
+        "user_query": { "type": ["string", "null"], "description": "Optional user question for disambiguation" },
+        "lang": { "type": ["string", "null"] },
+        "debug": { "type": "boolean", "default": false }
+      }
+    },
+    "signals": { "$ref": "#/$defs/VisionSignals" },
+    "debug": { "type": ["object", "null"], "additionalProperties": true }
+  },
+  "$defs": {
+    "VisionSignals": {
+      "type": "object",
+      "required": ["mode", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["packing", "landmark", "product_similarity"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "error": { "type": ["string", "null"], "description": "Error message if analysis failed" },
+        "detected_items": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Packing mode: travel item categories from 18-item set (e.g. light_top, rain_jacket, walking_shoes)"
+        },
+        "missing_categories": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Packing mode: critical missing categories for trip context"
+        },
+        "scene_type": {
+          "type": ["string", "null"],
+          "enum": ["landmark", "street", "beach", "mountain", "museum", "airport", "restaurant", "hotel", "transit", "urban", "nature", null],
+          "description": "Landmark mode: best-guess scene type"
+        },
+        "ocr_text": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Landmark mode: extracted text (signs, store names)"
+        },
+        "distinctive_features": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Landmark mode: visual cues (e.g. red double-decker bus, art deco buildings)"
+        },
+        "language_hint": { "type": ["string", "null"] },
+        "place_candidates": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/PlaceCandidate" },
+          "description": "Landmark mode: top 3 candidate places"
+        },
+        "category": {
+          "type": ["string", "null"],
+          "description": "Product_similarity mode: from 18-item travel category set"
+        },
+        "attributes": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "description": "Product_similarity mode: color, material, size_class, use_case"
+        },
+        "style_keywords": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Product_similarity mode: minimal, sporty, formal, etc."
+        },
+        "search_queries": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Product_similarity mode: 2-3 marketplace search query strings"
+        }
+      }
+    },
+    "PlaceCandidate": {
+      "type": "object",
+      "required": ["place_name"],
+      "additionalProperties": false,
+      "properties": {
+        "place_name": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

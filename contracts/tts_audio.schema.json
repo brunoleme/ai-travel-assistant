@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/tts_audio.schema.json",
+  "title": "TTSAudioPack",
+  "description": "Response from mcp-travel-tts: text-to-speech audio from text input.",
+  "type": "object",
+  "required": ["x_contract_version", "request", "audio_ref"],
+  "additionalProperties": false,
+  "properties": {
+    "x_contract_version": { "type": "string", "const": "1.0" },
+    "request": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Text to synthesize"
+        },
+        "voice": {
+          "type": ["string", "null"],
+          "description": "Voice ID (e.g. alloy, echo, fable, onyx, nova, shimmer); null for default"
+        },
+        "language": {
+          "type": ["string", "null"],
+          "description": "IETF tag e.g. en, pt-BR"
+        },
+        "speed": {
+          "type": ["number", "null"],
+          "minimum": 0.25,
+          "maximum": 4.0,
+          "description": "Speech speed (1.0 = normal)"
+        },
+        "format": {
+          "type": ["string", "null"],
+          "enum": ["mp3", "opus", "aac", "wav", "pcm", null],
+          "description": "Output format; null for default (mp3)"
+        },
+        "debug": { "type": "boolean", "default": false }
+      }
+    },
+    "audio_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Audio as data URL (data:audio/...;base64,...) or HTTP(S) URL"
+    },
+    "format": {
+      "type": ["string", "null"],
+      "enum": ["mp3", "opus", "aac", "wav", "pcm", null],
+      "description": "Actual output format"
+    },
+    "duration_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Synthesized audio duration in seconds"
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message if synthesis failed"
+    },
+    "debug": { "type": ["object", "null"], "additionalProperties": true }
+  }
+}
