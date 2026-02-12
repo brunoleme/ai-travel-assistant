@@ -54,6 +54,8 @@ async def _run_one(
     lang = query.get("lang")
     market = query.get("market")
     image_ref = query.get("image_ref")
+    audio_ref = query.get("audio_ref") or query.get("audio")
+    voice_mode = bool(query.get("voice_mode", False))
     trip_context = query.get("trip_context")
     session_id = f"eval-{run_id}-{uuid.uuid4().hex[:8]}"
     request_id = f"req-{uuid.uuid4().hex[:8]}"
@@ -66,6 +68,8 @@ async def _run_one(
         destination=destination,
         lang=lang,
         image_ref=image_ref,
+        audio_ref=audio_ref,
+        voice_mode=voice_mode,
         trip_context=trip_context,
         timing_out=timing,
     )
@@ -100,6 +104,9 @@ async def _run_one(
         "latency_ms_vision": timing.get("vision_ms", 0),
         "vision_included": timing.get("vision_ms", 0) > 0,
         "vision_mode": timing.get("vision_mode"),
+        "latency_ms_stt": timing.get("stt_ms", 0),
+        "latency_ms_tts": timing.get("tts_ms", 0),
+        "audio_included": bool(raw.get("audio_ref")),
         "citations_count": citations_count,
         "product_included": addon is not None,
         "groundedness_proxy": groundedness_proxy,

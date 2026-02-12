@@ -10,6 +10,8 @@ KNOW_DIR  := services/mcp-travel-knowledge
 PROD_DIR  := services/mcp-travel-products
 GRAPH_DIR := services/mcp-travel-graph
 VISION_DIR := services/mcp-travel-vision
+STT_DIR   := services/mcp-travel-stt
+TTS_DIR   := services/mcp-travel-tts
 ING_DIR   := services/ingestion
 TF_DIR    := infra/terraform
 
@@ -22,12 +24,13 @@ help:
 	@echo "  make fmt                        - Format all python services"
 	@echo "  make lint                       - Lint all python services"
 	@echo "  make test                       - Run unit tests for all services"
-	@echo "  make test-agent | test-knowledge | test-products | test-graph | test-vision | test-ingestion"
+	@echo "  make test-agent | test-knowledge | test-products | test-graph | test-vision | test-stt | test-tts | test-ingestion"
 	@echo "  make run-agent                   - Run FastAPI agent runtime"
 	@echo "  make run-knowledge               - Run MCP travel-knowledge server"
 	@echo "  make run-products                - Run MCP travel-products server"
 	@echo "  make run-graph                   - Run MCP travel-graph server"
 	@echo "  make run-vision                 - Run MCP travel-vision server"
+	@echo "  make run-stt | run-tts         - Run MCP travel-stt / travel-tts server"
 	@echo "  make eval                        - Run eval harness, write to data/eval/run.jsonl"
 	@echo "  make eval-vision                 - Run vision eval (15 queries), write to data/eval/run_vision.jsonl"
 	@echo "  make run-ingestion               - Run ingestion worker (local mode)"
@@ -37,8 +40,8 @@ help:
 	@echo ""
 
 # ---- Bootstrap ----
-.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-graph sync-vision sync-ingestion
-bootstrap: sync-agent sync-knowledge sync-products sync-graph sync-vision sync-ingestion
+.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-graph sync-vision sync-stt sync-tts sync-ingestion
+bootstrap: sync-agent sync-knowledge sync-products sync-graph sync-vision sync-stt sync-tts sync-ingestion
 
 sync-agent:
 	@echo "==> Sync $(AGENT_DIR) (with dev extras)"
@@ -60,6 +63,14 @@ sync-vision:
 	@echo "==> Sync $(VISION_DIR) (with dev extras)"
 	@cd $(VISION_DIR) && $(UV) sync --extra dev
 
+sync-stt:
+	@echo "==> Sync $(STT_DIR) (with dev extras)"
+	@cd $(STT_DIR) && $(UV) sync --extra dev
+
+sync-tts:
+	@echo "==> Sync $(TTS_DIR) (with dev extras)"
+	@cd $(TTS_DIR) && $(UV) sync --extra dev
+
 sync-ingestion:
 	@echo "==> Sync $(ING_DIR) (with dev extras)"
 	@cd $(ING_DIR) && $(UV) sync --extra dev
@@ -72,6 +83,8 @@ fmt: bootstrap
 	@cd $(PROD_DIR)  && $(PY) ruff format .
 	@cd $(GRAPH_DIR) && $(PY) ruff format .
 	@cd $(VISION_DIR) && $(PY) ruff format .
+	@cd $(STT_DIR)   && $(PY) ruff format .
+	@cd $(TTS_DIR)   && $(PY) ruff format .
 	@cd $(ING_DIR)   && $(PY) ruff format .
 
 lint: bootstrap
@@ -80,9 +93,11 @@ lint: bootstrap
 	@cd $(PROD_DIR)  && $(PY) ruff check .
 	@cd $(GRAPH_DIR) && $(PY) ruff check .
 	@cd $(VISION_DIR) && $(PY) ruff check .
+	@cd $(STT_DIR)   && $(PY) ruff check .
+	@cd $(TTS_DIR)   && $(PY) ruff check .
 	@cd $(ING_DIR)   && $(PY) ruff check .
 
-test: test-agent test-knowledge test-products test-graph test-vision test-ingestion
+test: test-agent test-knowledge test-products test-graph test-vision test-stt test-tts test-ingestion
 
 test-agent: sync-agent
 	@cd $(AGENT_DIR) && $(PY) python -m pytest -q
@@ -99,6 +114,12 @@ test-graph: sync-graph
 test-vision: sync-vision
 	@cd $(VISION_DIR) && $(PY) python -m pytest -q
 
+test-stt: sync-stt
+	@cd $(STT_DIR) && $(PY) python -m pytest -q
+
+test-tts: sync-tts
+	@cd $(TTS_DIR) && $(PY) python -m pytest -q
+
 test-ingestion: sync-ingestion
 	@cd $(ING_DIR) && $(PY) python -m pytest -q
 
@@ -106,7 +127,7 @@ test-ingestion: sync-ingestion
 # Load configs/.env so WEAVIATE_* etc. are set (run from repo root)
 ENV_FILE := configs/.env
 
-.PHONY: run-agent run-knowledge run-products run-graph run-vision run-ingestion
+.PHONY: run-agent run-knowledge run-products run-graph run-vision run-stt run-tts run-ingestion
 run-agent: sync-agent
 	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8000
 
@@ -121,6 +142,12 @@ run-graph: sync-graph
 
 run-vision: sync-vision
 	@cd $(VISION_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8032
+
+run-stt: sync-stt
+	@cd $(STT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8033
+
+run-tts: sync-tts
+	@cd $(TTS_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8034
 
 run-ingestion: sync-ingestion
 	@cd $(ING_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.main

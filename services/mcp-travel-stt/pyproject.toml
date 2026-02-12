@@ -1,0 +1,26 @@
+[project]
+name = "mcp-travel-stt"
+version = "0.1.0"
+description = "MCP server: speech-to-text transcription (OpenAI gpt-4o-mini-transcribe)"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.6",
+  "openai>=1.0",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "jsonschema>=4.20",
+  "httpx>=0.27",
+  "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"

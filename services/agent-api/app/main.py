@@ -18,6 +18,8 @@ from app.mcp_client import (
     retrieve_product_candidates,
     retrieve_travel_evidence,
     retrieve_travel_graph,
+    synthesize,
+    transcribe,
 )
 from app.memory_store import memory_hash, summary, update
 from app.tracing import Tracer, get_tracer, user_query_hash
@@ -67,6 +69,10 @@ PACKING_KEYWORDS = ("packing", "outfit", "clothes", "suitcase", "malas", "roupas
 LANDMARK_KEYWORDS = ("where is this", "landmark", "place", "onde é", "que lugar", "qual lugar", "o que é isso")
 PRODUCT_SIMILARITY_KEYWORDS = ("like this", "similar", "find one like", "parecido", "igual a", "encontre um como")
 
+# Voice mode switching: Quick (8–12s) vs Normal (15–30s).
+QUICK_MODE_KEYWORDS = ("urgent", "quick", "fast", "rápido", "agora", "now", "hurried", "short answer")
+NORMAL_MODE_KEYWORDS = ("itinerary", "compare", "explain", "roteiro", "comparar", "explicar", "suggest")
+
 # Critical packing gaps: recommend product when missing + context matches.
 CRITICAL_GAP_RULES = (
     ({"rain_jacket"}, {"rain_risk": ["medium", "high"]}),
@@ -109,6 +115,25 @@ def _infer_vision_mode(user_query: str) -> str:
     if any(kw in q for kw in LANDMARK_KEYWORDS):
         return "landmark"
     return "packing"
+
+
+def _infer_voice_mode(user_query: str) -> str:
+    """Infer voice mode: quick (8–12s) vs normal (15–30s). Planning → normal; urgency → quick."""
+    q = user_query.lower().strip()
+    if any(kw in q for kw in NORMAL_MODE_KEYWORDS):
+        return "normal"
+    if any(kw in q for kw in QUICK_MODE_KEYWORDS):
+        return "quick"
+    return "normal"
+
+
+def _build_spoken_version(answer_text: str, voice_mode: str) -> str:
+    """Build voice-safe spoken version; Quick 8–12s (~25 words), Normal 15–30s (~60 words)."""
+    words = answer_text.split()
+    max_words = 25 if voice_mode == "quick" else 60
+    if len(words) <= max_words:
+        return answer_text
+    return " ".join(words[:max_words]) + "."
 
 
 def _build_answer_and_citations(
@@ -202,13 +227,38 @@ async def run_pipeline_raw(
     destination: str | None = None,
     lang: str | None = None,
     image_ref: str | None = None,
+    audio_ref: str | None = None,
+    voice_mode: bool = False,
     trip_context: dict[str, Any] | None = None,
     timing_out: dict[str, float] | None = None,
     tracer: Tracer | None = None,
 ) -> dict[str, Any]:
-    """Run the agent pipeline (knowledge + products + graph + vision) and return response before guardrails."""
+    """Run the agent pipeline (knowledge + products + graph + vision + optional STT/TTS) and return response before guardrails."""
     if tracer is None:
         tracer = get_tracer()
+
+    t_stt = 0.0
+    t_tts = 0.0
+
+    # A7-V1: When audio_ref present, call STT first and use transcript as user_query
+    if audio_ref:
+        async with httpx.AsyncClient(timeout=max(15.0, config.timeout_s)) as client:
+            with tracer.span("stt_mcp_call", {"session_id": session_id, "request_id": request_id}):
+                stt_req = {"audio_ref": audio_ref, "language": lang}
+                t0 = time.perf_counter()
+                try:
+                    stt_resp = await transcribe(
+                        client, config.stt_base_url, stt_req
+                    )
+                    t_stt = (time.perf_counter() - t0) * 1000
+                    validate_or_raise(stt_resp, "stt_transcript.schema.json")
+                    transcript = (stt_resp.get("transcript") or "").strip()
+                    if transcript:
+                        user_query = transcript
+                except Exception:
+                    t_stt = (time.perf_counter() - t0) * 1000
+                    pass  # Keep original user_query on STT failure
+
     tags = {
         "session_id": session_id,
         "request_id": request_id,
@@ -349,21 +399,53 @@ async def run_pipeline_raw(
             if opts:
                 answer_text = answer_text.rstrip() + " Opções: " + " | ".join(opts)
 
+    # A7-V2/V3/V5: Voice mode — build spoken_version, call TTS, attach audio_ref
+    response_audio_ref: str | None = None
+    spoken_version: str | None = None
+    screen_summary: str | None = None
+    if voice_mode:
+        vmode = _infer_voice_mode(user_query)
+        spoken_version = _build_spoken_version(answer_text, vmode)
+        # A7-V4: When addon and voice, append permission ask
+        if addon and spoken_version:
+            spoken_version = spoken_version.rstrip(". ") + ". Want a link?"
+        screen_summary = answer_text
+        async with httpx.AsyncClient(timeout=max(15.0, config.timeout_s)) as client:
+            with tracer.span("tts_mcp_call", tags):
+                tts_req = {"text": spoken_version or answer_text, "language": lang}
+                t0 = time.perf_counter()
+                try:
+                    tts_resp = await synthesize(
+                        client, config.tts_base_url, tts_req
+                    )
+                    t_tts = (time.perf_counter() - t0) * 1000
+                    validate_or_raise(tts_resp, "tts_audio.schema.json")
+                    response_audio_ref = tts_resp.get("audio_ref")
+                except Exception:
+                    t_tts = (time.perf_counter() - t0) * 1000
+
     if timing_out is not None:
         timing_out["knowledge_ms"] = t_knowledge
         timing_out["products_ms"] = t_products
         timing_out["graph_ms"] = t_graph
         timing_out["vision_ms"] = t_vision
         timing_out["vision_mode"] = vision_mode
+        timing_out["stt_ms"] = t_stt
+        timing_out["tts_ms"] = t_tts
         timing_out["total_ms"] = (time.perf_counter() - t_start) * 1000
 
-    return {
+    out: dict[str, Any] = {
         "session_id": session_id,
         "request_id": request_id,
         "answer_text": answer_text,
         "citations": citations,
         "addon": addon,
     }
+    if voice_mode:
+        out["audio_ref"] = response_audio_ref
+        out["spoken_version"] = spoken_version
+        out["screen_summary"] = screen_summary
+    return out
 
 
 @app.get("/health")
@@ -383,12 +465,20 @@ async def ws_endpoint(ws: WebSocket) -> None:
             destination = msg.get("destination")
             lang = msg.get("lang")
             image_ref = msg.get("image_ref") or msg.get("image")
+            audio_ref = msg.get("audio_ref") or msg.get("audio")
+            voice_mode = bool(msg.get("voice_mode", False))
             trip_context = msg.get("trip_context")
 
             response = await run_pipeline_raw(
-                session_id, request_id, user_query,
-                destination=destination, lang=lang,
-                image_ref=image_ref, trip_context=trip_context,
+                session_id,
+                request_id,
+                user_query,
+                destination=destination,
+                lang=lang,
+                image_ref=image_ref,
+                audio_ref=audio_ref,
+                voice_mode=voice_mode,
+                trip_context=trip_context,
             )
             response = validate_and_fix(response, user_query)
             await ws.send_json(response)

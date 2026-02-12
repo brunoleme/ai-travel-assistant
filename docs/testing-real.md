@@ -24,9 +24,15 @@ make run-graph
 
 # Terminal 4 – Vision (port 8032) – for image-bearing queries
 make run-vision
+
+# Terminal 5 – STT (port 8033) – for voice input (audio → transcript)
+make run-stt
+
+# Terminal 6 – TTS (port 8034) – for voice output (text → audio)
+make run-tts
 ```
 
-Load `configs/.env` before each run (the Makefile does this). Ensure nothing else is using ports 8010, 8020, 8031, 8032.
+Load `configs/.env` before each run (the Makefile does this). Ensure nothing else is using ports 8010, 8020, 8031, 8032, 8033, 8034.
 
 ## 2. Run the eval harness (recommended)
 
@@ -75,6 +81,8 @@ Agent listens on port 8000. Use a WebSocket client (e.g. `websocat`, browser dev
 ```
 
 You should get a response with `answer_text`, `citations`, and optionally `addon`. For itinerary-style queries the agent calls the graph MCP and includes path-based content. For messages with `image_ref` (data URL or HTTP URL), the vision MCP is called with mode inferred from `user_query` (packing / landmark / product_similarity).
+
+**Voice mode:** Include `audio_ref` (data URL or HTTP URL) for speech input → STT transcribes and the transcript is used as the query. Set `voice_mode: true` to receive `audio_ref` (synthesized speech) and `spoken_version` / `screen_summary` in the response.
 
 ## 4. Custom query set (eval)
 
@@ -139,6 +147,9 @@ Each JSONL row contains:
 | `latency_ms_vision` | Vision MCP call time |
 | `vision_included` | Whether vision was invoked |
 | `vision_mode` | packing \| landmark \| product_similarity (if vision used) |
+| `latency_ms_stt` | STT MCP call latency (0 if not called) |
+| `latency_ms_tts` | TTS MCP call latency (0 if not called) |
+| `audio_included` | True when voice reply included audio_ref |
 | `graph_included` | Whether graph was invoked |
 | `citations_count` | Number of evidence citations |
 | `product_included` | Whether product addon was returned |

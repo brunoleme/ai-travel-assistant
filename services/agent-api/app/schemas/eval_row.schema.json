@@ -17,6 +17,9 @@
     "latency_ms_vision",
     "vision_included",
     "vision_mode",
+    "latency_ms_stt",
+    "latency_ms_tts",
+    "audio_included",
     "citations_count",
     "product_included",
     "groundedness_proxy",
@@ -95,8 +98,16 @@
       "description": "True when vision MCP was called"
     },
     "vision_mode": {
-      "type": ["string", "null"],
-      "enum": ["packing", "landmark", "product_similarity", null],
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "packing",
+        "landmark",
+        "product_similarity",
+        null
+      ],
       "description": "Vision mode when vision was called"
     },
     "citations_count": {
@@ -161,6 +172,17 @@
           ]
         }
       }
+    },
+    "latency_ms_stt": {
+      "type": "number",
+      "minimum": 0
+    },
+    "latency_ms_tts": {
+      "type": "number",
+      "minimum": 0
+    },
+    "audio_included": {
+      "type": "boolean"
     }
   }
 }
