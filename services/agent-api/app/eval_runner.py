@@ -88,6 +88,8 @@ async def _run_one(
         "latency_ms_total": timing.get("total_ms", 0),
         "latency_ms_knowledge": timing.get("knowledge_ms", 0),
         "latency_ms_products": timing.get("products_ms", 0),
+        "latency_ms_graph": timing.get("graph_ms", 0),
+        "graph_included": timing.get("graph_ms", 0) > 0,
         "citations_count": citations_count,
         "product_included": addon is not None,
         "groundedness_proxy": groundedness_proxy,

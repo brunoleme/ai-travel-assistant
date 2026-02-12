@@ -8,6 +8,7 @@ UV := uv
 AGENT_DIR := services/agent-api
 KNOW_DIR  := services/mcp-travel-knowledge
 PROD_DIR  := services/mcp-travel-products
+GRAPH_DIR := services/mcp-travel-graph
 ING_DIR   := services/ingestion
 TF_DIR    := infra/terraform
 
@@ -20,10 +21,11 @@ help:
 	@echo "  make fmt                        - Format all python services"
 	@echo "  make lint                       - Lint all python services"
 	@echo "  make test                       - Run unit tests for all services"
-	@echo "  make test-agent | test-knowledge | test-products | test-ingestion"
+	@echo "  make test-agent | test-knowledge | test-products | test-graph | test-ingestion"
 	@echo "  make run-agent                   - Run FastAPI agent runtime"
 	@echo "  make run-knowledge               - Run MCP travel-knowledge server"
 	@echo "  make run-products                - Run MCP travel-products server"
+	@echo "  make run-graph                   - Run MCP travel-graph server"
 	@echo "  make eval                        - Run eval harness, write to data/eval/run.jsonl"
 	@echo "  make run-ingestion               - Run ingestion worker (local mode)"
 	@echo "  make send-graph URL=... DESTINATION_HINT=...  - Enqueue one youtube_kg (Neo4j) job"
@@ -32,8 +34,8 @@ help:
 	@echo ""
 
 # ---- Bootstrap ----
-.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-ingestion
-bootstrap: sync-agent sync-knowledge sync-products sync-ingestion
+.PHONY: bootstrap sync-agent sync-knowledge sync-products sync-graph sync-ingestion
+bootstrap: sync-agent sync-knowledge sync-products sync-graph sync-ingestion
 
 sync-agent:
 	@echo "==> Sync $(AGENT_DIR) (with dev extras)"
@@ -47,6 +49,10 @@ sync-products:
 	@echo "==> Sync $(PROD_DIR) (with dev extras)"
 	@cd $(PROD_DIR) && $(UV) sync --extra dev
 
+sync-graph:
+	@echo "==> Sync $(GRAPH_DIR) (with dev extras)"
+	@cd $(GRAPH_DIR) && $(UV) sync --extra dev
+
 sync-ingestion:
 	@echo "==> Sync $(ING_DIR) (with dev extras)"
 	@cd $(ING_DIR) && $(UV) sync --extra dev
@@ -57,15 +63,17 @@ fmt: bootstrap
 	@cd $(AGENT_DIR) && $(PY) ruff format .
 	@cd $(KNOW_DIR)  && $(PY) ruff format .
 	@cd $(PROD_DIR)  && $(PY) ruff format .
+	@cd $(GRAPH_DIR) && $(PY) ruff format .
 	@cd $(ING_DIR)   && $(PY) ruff format .
 
 lint: bootstrap
 	@cd $(AGENT_DIR) && $(PY) ruff check .
 	@cd $(KNOW_DIR)  && $(PY) ruff check .
 	@cd $(PROD_DIR)  && $(PY) ruff check .
+	@cd $(GRAPH_DIR) && $(PY) ruff check .
 	@cd $(ING_DIR)   && $(PY) ruff check .
 
-test: test-agent test-knowledge test-products test-ingestion
+test: test-agent test-knowledge test-products test-graph test-ingestion
 
 test-agent: sync-agent
 	@cd $(AGENT_DIR) && $(PY) python -m pytest -q
@@ -76,6 +84,9 @@ test-knowledge: sync-knowledge
 test-products: sync-products
 	@cd $(PROD_DIR) && $(PY) python -m pytest -q
 
+test-graph: sync-graph
+	@cd $(GRAPH_DIR) && $(PY) python -m pytest -q
+
 test-ingestion: sync-ingestion
 	@cd $(ING_DIR) && $(PY) python -m pytest -q
 
@@ -83,7 +94,7 @@ test-ingestion: sync-ingestion
 # Load configs/.env so WEAVIATE_* etc. are set (run from repo root)
 ENV_FILE := configs/.env
 
-.PHONY: run-agent run-knowledge run-products run-ingestion
+.PHONY: run-agent run-knowledge run-products run-graph run-ingestion
 run-agent: sync-agent
 	@cd $(AGENT_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8000
 
@@ -92,6 +103,9 @@ run-knowledge: sync-knowledge
 
 run-products: sync-products
 	@cd $(PROD_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8020
+
+run-graph: sync-graph
+	@cd $(GRAPH_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) uvicorn app.main:app --reload --port 8031
 
 run-ingestion: sync-ingestion
 	@cd $(ING_DIR) && set -a && . ../../$(ENV_FILE) && set +a && $(PY) python -m app.main

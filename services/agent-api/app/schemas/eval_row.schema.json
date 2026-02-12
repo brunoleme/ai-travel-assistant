@@ -12,6 +12,8 @@
     "latency_ms_total",
     "latency_ms_knowledge",
     "latency_ms_products",
+    "latency_ms_graph",
+    "graph_included",
     "citations_count",
     "product_included",
     "groundedness_proxy",
@@ -70,6 +72,15 @@
     "latency_ms_products": {
       "type": "number",
       "minimum": 0
+    },
+    "latency_ms_graph": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Graph MCP call latency (0 if not called)"
+    },
+    "graph_included": {
+      "type": "boolean",
+      "description": "True when graph MCP was called"
     },
     "citations_count": {
       "type": "integer",

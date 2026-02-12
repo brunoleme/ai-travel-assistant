@@ -16,12 +16,13 @@ from app.mcp_client import (
     MCPConfig,
     retrieve_product_candidates,
     retrieve_travel_evidence,
+    retrieve_travel_graph,
 )
 from app.memory_store import memory_hash, summary, update
 from app.tracing import Tracer, get_tracer, user_query_hash
 
 app = FastAPI(title="ai-travel-assistant agent-api", version="0.1.0")
-config = MCPConfig()
+config = MCPConfig.from_env()
 
 
 def _build_query_signature(
@@ -45,12 +46,55 @@ def _is_commercial_query(user_query: str) -> bool:
     return any(k in q for k in commercial)
 
 
-def _build_answer_and_citations(evidence: list[dict]) -> tuple[str, list[str]]:
-    if not evidence:
-        return "No travel evidence found for your query.", []
-    summaries = [e["summary"] for e in evidence]
-    answer = " ".join(summaries)
-    citations = [e["source_url"] for e in evidence if e.get("source_url")]
+# Routing: itinerary/routes/day-order → call graph MCP in addition to knowledge.
+GRAPH_QUERY_KEYWORDS = (
+    "itinerary", "itinerário", "roteiro", "routes", "rotas", "trajeto", "trajetos",
+    "day 1", "dia 1", "day 2", "dia 2", "order of visits", "ordem das visitas",
+    "what to do first", "o que fazer primeiro", "suggest a", "sugira um", "sugira uma",
+    "3-day", "3 day", "5-day", "5 day", "week itinerary", "semana",
+)
+
+
+def _should_call_graph(user_query: str) -> bool:
+    """True if query suggests itinerary, routes, or day-order (graph MCP)."""
+    q = user_query.lower().strip()
+    return any(kw in q for kw in GRAPH_QUERY_KEYWORDS)
+
+
+def _build_answer_and_citations(
+    evidence: list[dict],
+    graph_response: dict[str, Any] | None = None,
+) -> tuple[str, list[str]]:
+    citations: list[str] = []
+    parts: list[str] = []
+
+    if evidence:
+        summaries = [e["summary"] for e in evidence]
+        parts.append(" ".join(summaries))
+        citations.extend(e["source_url"] for e in evidence if e.get("source_url"))
+
+    if graph_response:
+        subgraph = graph_response.get("subgraph") or {}
+        paths = graph_response.get("paths") or []
+        nodes_by_id = {n["id"]: n.get("name", n["id"]) for n in (subgraph.get("nodes") or [])}
+        path_lines = []
+        for p in paths[:3]:
+            label = p.get("label") or p.get("path_id") or "Itinerary"
+            node_ids = p.get("nodes") or []
+            names = [nodes_by_id.get(nid, nid) for nid in node_ids if isinstance(nid, str)]
+            path_lines.append(f"{label}: {', '.join(names)}" if names else label)
+        if path_lines:
+            parts.append(" ".join(path_lines))
+        for p in paths:
+            for ev in p.get("evidence") or []:
+                if ev.get("timestampUrl"):
+                    citations.append(ev["timestampUrl"])
+        for edge in subgraph.get("edges") or []:
+            ev = edge.get("evidence") or {}
+            if ev.get("timestampUrl"):
+                citations.append(ev["timestampUrl"])
+
+    answer = " ".join(parts) if parts else "No travel evidence found for your query."
     return answer, citations
 
 
@@ -85,6 +129,8 @@ async def run_pipeline_raw(
 
     t_knowledge = 0.0
     t_products = 0.0
+    t_graph = 0.0
+    graph_resp: dict[str, Any] | None = None
 
     async with httpx.AsyncClient(timeout=config.timeout_s) as client:
         with tracer.span("answer_generation", tags):
@@ -99,7 +145,26 @@ async def run_pipeline_raw(
 
         validate_or_raise(ev_resp, "travel_evidence.schema.json")
         evidence = ev_resp.get("evidence", [])
-        answer_text, citations = _build_answer_and_citations(evidence)
+
+        if _should_call_graph(user_query):
+            with tracer.span("graph_mcp_call", tags):
+                graph_req = {
+                    "user_query": user_query,
+                    "destination": destination,
+                    "lang": lang,
+                }
+                t0 = time.perf_counter()
+                try:
+                    graph_resp = await retrieve_travel_graph(
+                        client, config.graph_base_url, graph_req
+                    )
+                except Exception:
+                    graph_resp = None
+                t_graph = (time.perf_counter() - t0) * 1000
+            if graph_resp is not None:
+                validate_or_raise(graph_resp, "graph_rag.schema.json")
+
+        answer_text, citations = _build_answer_and_citations(evidence, graph_resp)
 
         with tracer.span("product_decision", tags):
             prod_req = {
@@ -126,6 +191,7 @@ async def run_pipeline_raw(
     if timing_out is not None:
         timing_out["knowledge_ms"] = t_knowledge
         timing_out["products_ms"] = t_products
+        timing_out["graph_ms"] = t_graph
         timing_out["total_ms"] = (time.perf_counter() - t_start) * 1000
 
     return {
